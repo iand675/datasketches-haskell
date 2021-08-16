@@ -17,11 +17,14 @@ module DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
   , trimCount
   ) where
 
-import DataSketches.Quantilles.RelativeErrorQuantile.Types
+import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import Control.Monad.Primitive
 import qualified Data.Vector.Unboxed as MUVector
 import Data.Vector.Unboxed
+
 data DoubleBuffer = DoubleBuffer
+  {
+  }
 
 append :: DoubleBuffer -> Double -> m ()
 append = undefined 

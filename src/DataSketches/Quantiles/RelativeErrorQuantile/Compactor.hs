@@ -15,11 +15,11 @@ module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
 import GHC.TypeLits
 import Data.Semigroup (Semigroup)
 import Data.Word
-import DataSketches.Quantilles.RelativeErrorQuantile.Types
+import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import System.Random.MWC (Variate(uniformR))
 import Control.Monad.Trans
 import Control.Monad.Primitive
-import DataSketches.Quantilles.RelativeErrorQuantile.DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
 
 
 data CompactorReturn = CompactorReturn
