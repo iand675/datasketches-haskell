@@ -24,7 +24,7 @@ import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import DataSketches.Quantiles.RelativeErrorQuantile.Compactor
 
-data ReqSketch = ReqSketch
+data ReqSketch s k = ReqSketch
   { sectionSize :: !Int -- ^ Referred to as k in the paper
   , rankAccuracySetting :: !RankAccuracy
   , ltEq :: Bool
@@ -34,7 +34,7 @@ data ReqSketch = ReqSketch
   , retainedItems :: !Int
   , maxNominalCapacitiesSize :: !Int
   , aux :: ()
-  , compactors :: [ReqCompactor]
+  , compactors :: [ReqCompactor s k]
   }
 
 cumulativeDistributionFunction :: [Double] -> ReqSketch -> [Double]
@@ -76,9 +76,6 @@ ranks = undefined
 
 rankUpperBound :: ReqSketch -> Double -> Int -> Double
 rankUpperBound = undefined
-
-retainedItems :: ReqSketch -> Int
-retainedItems = undefined
 
 -- Foldable
 

@@ -1,6 +1,6 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
   ( ReqCompactor
   , CompactorReturn
@@ -22,7 +22,6 @@ import System.Random.MWC (create, Variate(uniform))
 import Control.Monad.Trans
 import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
-import DataSketches.Quantiles.RelativeErrorQuantile.URef
 
 
 data CompactorReturn = CompactorReturn
@@ -34,7 +33,7 @@ data ReqCompactor s (lgWeight :: Nat) = ReqCompactor
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
   -- State
-  , rcState :: !(URef s Word64)
+  , rcState :: !Word64
   , rcSectionSizeFlt :: !Double
   , rcSectionSize :: !Word32
   , rcNumSections :: !Word8
@@ -75,36 +74,36 @@ getSectionSizeFlt :: PrimMonad m => ReqCompactor (PrimState m) k -> m Double
 getSectionSizeFlt = pure . rcSectionSizeFlt
 
 getState :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word64
-getState = readURef . rcState
+getState = pure . rcState
 
 isHighRankAccuracy :: PrimMonad m => ReqCompactor (PrimState m) k -> m Bool
 isHighRankAccuracy = pure . (HighRanksAreAccurate ==) . rcRankAccuracy
 
 merge 
-  :: forall m lgWeight. PrimMonad m 
+  :: (PrimMonad m, s ~ PrimState m)
   => ReqCompactor (PrimState m) lgWeight 
   -> ReqCompactor (PrimState m) lgWeight 
-  -> m (ReqCompactor (PrimState m) lgWeight)
+  -> m (ReqCompactor s lgWeight)
 merge compactorA compactorB = do
   _ <- ensureEnoughSections compactorA
   let buff = rcBuffer compactorA
   _ <- sort buff
   otherBuff <- undefined -- copy the buffer from compactorB
   _ <- sort otherBuff
-  finalBuff <- if (getCount otherBuff) > (getCount buff)
+  otherBuffIsBigger <- (>) <$> getCount otherBuff <*> getCount buff
+  finalBuff <- if otherBuffIsBigger
      then mergeSortIn otherBuff buff
      else mergeSortIn buff otherBuff
-  pure (compactorA
+  pure $ compactorA
     { rcState = rcState compactorA .|. rcState compactorB
     , rcBuffer = finalBuff
-    } :: ReqCompactor (PrimState m) k)
+    }
 
 ensureEnoughSections :: PrimMonad m => ReqCompactor (PrimState m) a -> m Bool
 ensureEnoughSections compactor = do
   let szf = rcSectionSizeFlt compactor / sqrt2
       ne = nearestEven szf
-  state <- readURef $ rcState compactor
-  if (state >= (1 `shiftL` (fromInteger $ toInteger $ pred $ rcNumSections compactor)))
+  if (rcState compactor >= (1 `shiftL` (fromInteger $ toInteger $ pred $ rcNumSections compactor)))
      && rcSectionSize compactor > minK
      && ne >= minK
      then undefined 
