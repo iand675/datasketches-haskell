@@ -25,6 +25,7 @@ import Control.Monad.Primitive
 import Data.Bits (shiftL)
 import qualified Data.Vector.Mutable as MVector
 import Data.Word
+import DataSketches.Quantiles.RelativeErrorQuantile.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import DataSketches.Quantiles.RelativeErrorQuantile.Compactor (ReqCompactor)
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Compactor as Compactor
@@ -46,6 +47,9 @@ data ReqSketch s k = ReqSketch
   , aux :: ()
   , compactors :: MVector.MVector s (ReqCompactor s k)
   }
+
+getNumLevels :: ReqSketch s k -> Int
+getNumLevels = MVector.length . compactors
 
 cumulativeDistributionFunction :: PrimMonad m => [Double] -> ReqSketch (PrimState m) k -> m [Double]
 cumulativeDistributionFunction splitPoints = undefined
@@ -98,10 +102,16 @@ rank s value = do
 
 
 rankLowerBound :: ReqSketch s k -> Double -> Int -> Double
-rankLowerBound = undefined
+rankLowerBound s rank numStdDev = undefined
 
-ranks :: ReqSketch s k -> [Double] -> [Double]
-ranks = undefined
+ranks :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch s k -> [Double] -> m [Double]
+ranks s values = do
+  isEmpty <- null s
+  if isEmpty
+    then pure []
+    else do
+      error "TODO"
+
 
 rankUpperBound :: ReqSketch s k -> Double -> Int -> Double
 rankUpperBound = undefined
@@ -110,19 +120,55 @@ null :: (PrimMonad m) => ReqSketch (PrimState m) k -> m Bool
 null = fmap (== 0) . readURef . totalN
 
 isEstimationMode :: ReqSketch s k -> Bool
-isEstimationMode = undefined
+isEstimationMode = (> 1) . getNumLevels
 
 isLessThanOrEqual :: ReqSketch s k -> Bool
-isLessThanOrEqual = undefined
+isLessThanOrEqual s = case criterion s of
+  (:<) -> False
+  (:<=) -> True
 
 merge 
   :: (PrimMonad m, s ~ PrimState m)
   => ReqSketch s k 
   -> ReqSketch s k 
   -> m (ReqSketch s k)
-merge this other = pure this
+merge this other = undefined
 
 -- TODO reset?
 
 update :: PrimMonad m => ReqSketch (PrimState m) k -> Double -> m ()
 update = undefined
+
+-- Private pure bits
+
+getRankLB :: Int -> Int -> Double -> Int -> Bool -> Word64 -> Double
+getRankLB k levels rank numStdDev hra totalN = if exactRank k levels rank hra totalN
+  then rank
+  else max lbRel lbFix
+  where
+    relative = relRseFactor / fromIntegral k * (if hra then 1.0 - rank else rank)
+    fixed = fixRseFactor / fromIntegral k
+    lbRel = rank - fromIntegral numStdDev * relative
+    lbFix = rank - fromIntegral numStdDev * fixed
+
+getRankUB :: Int -> Int -> Double -> Int -> Bool -> Word64 -> Double
+getRankUB k levels rank numStdDev hra totalN = if exactRank k levels rank hra totalN
+  then rank
+  else min lbRel lbFix
+  where
+    relative = relRseFactor / fromIntegral k * (if hra then 1.0 - rank else rank)
+    fixed = fixRseFactor / fromIntegral k
+    lbRel = rank + fromIntegral numStdDev * relative
+    lbFix = rank + fromIntegral numStdDev * fixed
+  
+exactRank :: Int -> Int -> Double -> Bool -> Word64 -> Bool
+exactRank k levels rank hra totalN = if levels == 1 || fromIntegral totalN <= baseCap
+  then True
+  else hra && rank >= 1.0 - exactRankThresh || not hra && rank <= exactRankThresh
+  where
+    baseCap = k * initNumberOfSections
+    exactRankThresh :: Double
+    exactRankThresh = fromIntegral baseCap / fromIntegral totalN
+
+getRSE :: Int -> Double -> Bool -> Word64 -> Double
+getRSE k rank hra totalN = getRankUB k 2 rank 1 hra totalN

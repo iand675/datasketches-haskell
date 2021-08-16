@@ -5,13 +5,13 @@ import Data.Word
 sqrt2 :: Double 
 sqrt2 = sqrt 2
 
-initNumberOfSections :: Word8
+initNumberOfSections :: Num a => a
 initNumberOfSections = 3
 
-minK :: Word8
+minK :: Num a => a
 minK = 4
 
-nomCapMulti :: Word8
+nomCapMulti :: Num a => a
 nomCapMulti = 2
 
 relRseFactor :: Double
