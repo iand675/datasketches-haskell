@@ -24,7 +24,6 @@ dependencies:
 - vector
 - mwc-random
 - mtl
-- compact
 - primitive
 - vector-algorithms
 

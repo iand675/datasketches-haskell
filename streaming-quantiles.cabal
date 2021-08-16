@@ -37,7 +37,6 @@ library
       src
   build-depends:
       base >=4.7 && <5
-    , compact
     , mtl
     , mwc-random
     , primitive
@@ -55,7 +54,6 @@ test-suite streaming-quantiles-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
-    , compact
     , mtl
     , mwc-random
     , primitive
