@@ -1,5 +1,6 @@
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE RankNTypes #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
   ( ReqCompactor
   , CompactorReturn
@@ -21,6 +22,7 @@ import System.Random.MWC (create, Variate(uniform))
 import Control.Monad.Trans
 import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.URef
 
 
 data CompactorReturn = CompactorReturn
@@ -28,15 +30,15 @@ data CompactorReturn = CompactorReturn
   , deltaNominalSize :: !Int
   }
 
-data ReqCompactor (lgWeight :: Nat) = ReqCompactor 
+data ReqCompactor s (lgWeight :: Nat) = ReqCompactor 
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
   -- State
-  , rcState :: !Word64
+  , rcState :: !(URef s Word64)
   , rcSectionSizeFlt :: !Double
   , rcSectionSize :: !Word32
   , rcNumSections :: !Word8
-  , rcBuffer :: DoubleBuffer
+  , rcBuffer :: DoubleBuffer s
   }
 
 sqrt2 :: Double
@@ -48,10 +50,10 @@ minK = 4
 nomCapMult :: Num a => a
 nomCapMult = 2
 
-compact :: PrimMonad m => ReqCompactor k -> CompactorReturn -> m DoubleBuffer
+compact :: PrimMonad m => ReqCompactor (PrimState m) k -> CompactorReturn -> m (DoubleBuffer (PrimState m))
 compact = undefined
 
-getBuffer :: PrimMonad m => ReqCompactor k -> m DoubleBuffer
+getBuffer :: PrimMonad m => ReqCompactor (PrimState m) k -> m (DoubleBuffer (PrimState m))
 getBuffer = pure . rcBuffer
 
 getCoin :: (PrimMonad m, MonadIO m) => m Bool
@@ -60,25 +62,29 @@ getCoin = create >>= uniform
 getLgWeight :: PrimMonad m => m Word8
 getLgWeight = undefined
 
-getNominalCapacity :: PrimMonad m => ReqCompactor k -> m Int
+getNominalCapacity :: PrimMonad m => ReqCompactor (PrimState m) k -> m Int
 getNominalCapacity compactor = pure $ nomCapMult * (toInt $ rcNumSections compactor) * (toInt $ rcSectionSize compactor)
   where 
     toInt :: Integral a => a -> Int
     toInt = fromInteger . toInteger
 
-getNumSections :: PrimMonad m => ReqCompactor k -> m Word8
+getNumSections :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word8
 getNumSections = pure . rcNumSections
 
-getSectionSizeFlt :: PrimMonad m => ReqCompactor k -> m Double
+getSectionSizeFlt :: PrimMonad m => ReqCompactor (PrimState m) k -> m Double
 getSectionSizeFlt = pure . rcSectionSizeFlt
 
-getState :: PrimMonad m => ReqCompactor k -> m Word64
-getState = pure . rcState
+getState :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word64
+getState = readURef . rcState
 
-isHighRankAccuracy :: PrimMonad m => ReqCompactor k -> m Bool
+isHighRankAccuracy :: PrimMonad m => ReqCompactor (PrimState m) k -> m Bool
 isHighRankAccuracy = pure . (HighRanksAreAccurate ==) . rcRankAccuracy
 
-merge :: PrimMonad m => ReqCompactor lgWeight -> ReqCompactor lgWeight -> m (ReqCompactor lgWeight)
+merge 
+  :: forall m lgWeight. PrimMonad m 
+  => ReqCompactor (PrimState m) lgWeight 
+  -> ReqCompactor (PrimState m) lgWeight 
+  -> m (ReqCompactor (PrimState m) lgWeight)
 merge compactorA compactorB = do
   _ <- ensureEnoughSections compactorA
   let buff = rcBuffer compactorA
@@ -88,12 +94,12 @@ merge compactorA compactorB = do
   finalBuff <- if (getCount otherBuff) > (getCount buff)
      then mergeSortIn otherBuff buff
      else mergeSortIn buff otherBuff
-  pure $ compactorA
+  pure (compactorA
     { rcState = rcState compactorA .|. rcState compactorB
     , rcBuffer = finalBuff
-    }
+    } :: ReqCompactor (PrimState m) k)
 
-ensureEnoughSections :: PrimMonad m => ReqCompactor a -> m Bool
+ensureEnoughSections :: PrimMonad m => ReqCompactor (PrimState m) a -> m Bool
 ensureEnoughSections compactor = do
   let szf = rcSectionSizeFlt compactor / sqrt2
       ne = nearestEven szf

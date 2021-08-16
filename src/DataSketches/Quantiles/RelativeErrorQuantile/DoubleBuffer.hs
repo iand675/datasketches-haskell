@@ -124,7 +124,7 @@ sort buf@DoubleBuffer{..} = do
     sortByBounds compare vec start end
     writeURef sorted True
 
-mergeSortIn :: PrimMonad m => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m ()
+mergeSortIn :: PrimMonad m => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m (DoubleBuffer (PrimState m))
 mergeSortIn this bufIn = do
   sort this
   sort bufIn
@@ -148,6 +148,7 @@ mergeSortIn this bufIn = do
       let j = bufInLen - 1
       let k = totalLength
       mergeDownwards i j k
+  pure this
   where
     mergeUpwards capacity_ bufInCapacity_ = go
       where 
