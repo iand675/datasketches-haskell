@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
   ( cumulativeDistributionFunction  
   , RankAccuracy(..)
@@ -20,78 +21,108 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , update
   ) where
 
+import Control.Monad.Primitive
+import Data.Bits (shiftL)
+import qualified Data.Vector.Mutable as MVector
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import DataSketches.Quantiles.RelativeErrorQuantile.Compactor
+import DataSketches.Quantiles.RelativeErrorQuantile.Compactor (ReqCompactor)
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Compactor as Compactor
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer as DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.URef
+import GHC.TypeLits
+import Prelude hiding (null, minimum, maximum)
 
 data ReqSketch s k = ReqSketch
   { sectionSize :: !Int -- ^ Referred to as k in the paper
   , rankAccuracySetting :: !RankAccuracy
+  , criterion :: !Criterion
   , ltEq :: Bool
-  , totalN :: !Word64
-  , minValue :: !Double
-  , maxValue :: !Double 
-  , retainedItems :: !Int
+  , totalN :: !(URef s Word64)
+  , minValue :: !(URef s Double)
+  , maxValue :: !(URef s Double )
+  , retainedItems :: !(URef s Int)
   , maxNominalCapacitiesSize :: !Int
   , aux :: ()
-  , compactors :: [ReqCompactor s k]
+  , compactors :: MVector.MVector s (ReqCompactor s k)
   }
 
-cumulativeDistributionFunction :: [Double] -> ReqSketch -> [Double]
+cumulativeDistributionFunction :: PrimMonad m => [Double] -> ReqSketch (PrimState m) k -> m [Double]
 cumulativeDistributionFunction splitPoints = undefined
 
-
-rankAccuracy :: ReqSketch -> RankAccuracy
+rankAccuracy :: ReqSketch s k -> RankAccuracy
 rankAccuracy = undefined
 
-relativeStandardError :: ReqSketch -> Int -> Double -> RankAccuracy -> Int -> Double
+relativeStandardError :: ReqSketch s k -> Int -> Double -> RankAccuracy -> Int -> Double
 relativeStandardError = undefined 
 
-minimum :: ReqSketch -> Double
-minimum = _
+minimum :: PrimMonad m => ReqSketch (PrimState m) k -> m Double
+minimum = readURef . minValue
 
-maximum :: ReqSketch -> Double
-maximum = _
+maximum :: PrimMonad m => ReqSketch (PrimState m) k -> m Double
+maximum = readURef . maxValue
 
-count :: ReqSketch -> Word64
-count = _
+-- not public
+count :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch s k -> Double -> m Word64
+count s value = fromIntegral <$> do
+  empty <- null s
+  if empty
+    then pure 0
+    else do
+      let go accum compactor = do
+            let wt = (1 `shiftL` fromIntegral (Compactor.getLgWeight compactor)) :: Word64
+            let buf = Compactor.getBuffer compactor
+            count_ <- DoubleBuffer.getCountWithCriterion buf value (criterion s)
+            pure (accum + (fromIntegral count_ * wt))
+      MVector.foldM go 0 (compactors s)
 
-probabilityMassFunction :: ReqSketch -> [Double] -> [Double]
+probabilityMassFunction :: ReqSketch s k -> [Double] -> [Double]
 probabilityMassFunction  = undefined
 
-quantile :: ReqSketch -> Double -> Double
-quantile = _
+quantile :: ReqSketch s k -> Double -> Double
+quantile = undefined
 
-quantiles :: ReqSketch -> [Double] -> Double
-quantiles = _
+quantiles :: ReqSketch s k -> [Double] -> Double
+quantiles = undefined
 
-rank :: ReqSketch -> Double -> Double 
-rank = _
+rank :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch s k -> Double -> m Double 
+rank s value = do
+  isEmpty <- null s
+  if isEmpty
+    then pure (0 / 0) -- NaN
+    else do
+      nnCount <- count s value
+      total <- readURef $ totalN s
+      pure (fromIntegral nnCount / fromIntegral total)
 
-rankLowerBound :: ReqSketch -> Double -> Int -> Double
+
+
+rankLowerBound :: ReqSketch s k -> Double -> Int -> Double
 rankLowerBound = undefined
 
-ranks :: ReqSketch -> [Double] -> [Double]
+ranks :: ReqSketch s k -> [Double] -> [Double]
 ranks = undefined
 
-rankUpperBound :: ReqSketch -> Double -> Int -> Double
+rankUpperBound :: ReqSketch s k -> Double -> Int -> Double
 rankUpperBound = undefined
 
--- Foldable
+null :: (PrimMonad m) => ReqSketch (PrimState m) k -> m Bool
+null = fmap (== 0) . readURef . totalN
 
-null :: ReqSketch -> Bool
-null = undefined
-
-isEstimationMode :: ReqSketch -> Bool
+isEstimationMode :: ReqSketch s k -> Bool
 isEstimationMode = undefined
 
-isLessThanOrEqual :: ReqSketch -> Bool
+isLessThanOrEqual :: ReqSketch s k -> Bool
 isLessThanOrEqual = undefined
 
-merge :: ReqSketch -> ReqSketch -> ReqSketch
-merge = undefined
+merge 
+  :: (PrimMonad m, s ~ PrimState m)
+  => ReqSketch s k 
+  -> ReqSketch s k 
+  -> m (ReqSketch s k)
+merge this other = pure this
 
 -- TODO reset?
 
-update :: ReqSketch -> Double -> ReqSketch
+update :: PrimMonad m => ReqSketch (PrimState m) k -> Double -> m ()
 update = undefined

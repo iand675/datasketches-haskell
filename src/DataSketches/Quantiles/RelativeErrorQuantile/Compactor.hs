@@ -52,14 +52,14 @@ nomCapMult = 2
 compact :: PrimMonad m => ReqCompactor (PrimState m) k -> CompactorReturn -> m (DoubleBuffer (PrimState m))
 compact = undefined
 
-getBuffer :: PrimMonad m => ReqCompactor (PrimState m) k -> m (DoubleBuffer (PrimState m))
-getBuffer = pure . rcBuffer
+getBuffer :: ReqCompactor s k -> DoubleBuffer s
+getBuffer = rcBuffer
 
 getCoin :: (PrimMonad m, MonadIO m) => m Bool
 getCoin = create >>= uniform
 
-getLgWeight :: PrimMonad m => m Word8
-getLgWeight = undefined
+getLgWeight :: KnownNat n => ReqCompactor s n -> Word8
+getLgWeight = fromIntegral . natVal
 
 getNominalCapacity :: PrimMonad m => ReqCompactor (PrimState m) k -> m Int
 getNominalCapacity compactor = pure $ nomCapMult * (toInt $ rcNumSections compactor) * (toInt $ rcSectionSize compactor)
