@@ -39,7 +39,8 @@ packages:
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
-# extra-deps: []
+extra-deps:
+- red-black-tree-0.1.0.0@sha256:62ef8200e8945d21afcc53a015779a27d6578d79d0e2d4dc6e8b3bcf9dabc8d4,1938
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
