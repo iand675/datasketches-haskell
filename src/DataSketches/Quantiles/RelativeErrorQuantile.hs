@@ -21,8 +21,8 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   ) where
 
 import Data.Word
-import DataSketches.Quantilles.RelativeErrorQuantile.Types
-import DataSketches.Quantilles.RelativeErrorQuantile.Compactor
+import DataSketches.Quantiles.RelativeErrorQuantile.Types
+import DataSketches.Quantiles.RelativeErrorQuantile.Compactor
 
 data ReqSketch = ReqSketch
   { sectionSize :: !Int -- ^ Referred to as k in the paper
