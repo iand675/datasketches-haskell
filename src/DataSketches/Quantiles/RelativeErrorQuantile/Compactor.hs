@@ -103,7 +103,8 @@ ensureEnoughSections :: PrimMonad m => ReqCompactor (PrimState m) a -> m Bool
 ensureEnoughSections compactor = do
   let szf = rcSectionSizeFlt compactor / sqrt2
       ne = nearestEven szf
-  if (rcState compactor >= (1 `shiftL` (fromInteger $ toInteger $ pred $ rcNumSections compactor)))
+  state <- readURef $ rcState compactor
+  if (state >= (1 `shiftL` (fromInteger $ toInteger $ pred $ rcNumSections compactor)))
      && rcSectionSize compactor > minK
      && ne >= minK
      then undefined 
