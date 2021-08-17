@@ -1,6 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeOperators #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
   ( ReqSketch
   , mkReqSketch
@@ -51,7 +48,7 @@ data ReqSketch s k = ReqSketch
   , retainedItems :: !(URef s Int)
   , maxNominalCapacitiesSize :: !Int
   , aux :: !(MutVar s (Maybe ()))
-  , compactors :: MVector.MVector s (ReqCompactor s k)
+  , compactors :: MVector.MVector s (ReqCompactor k s)
   }
 
 mkReqSketch :: (PrimMonad m, 4 <= k, k <= 1024, (k `Mod` 2) ~ 0) => RankAccuracy -> m (ReqSketch (PrimState m) k)

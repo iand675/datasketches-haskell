@@ -1,6 +1,3 @@
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DataKinds #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
   ( ReqCompactor
   , CompactorReturn
@@ -17,6 +14,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
 import GHC.TypeLits
 import Data.Bits ((.&.), (.|.), complement, countTrailingZeros, shiftL, shiftR)
 import Data.Primitive.MutVar
+import Data.Proxy
 import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -35,7 +33,7 @@ data CompactorReturn s = CompactorReturn
   , crDoubleBuffer :: !(DoubleBuffer s)
   }
 
-data ReqCompactor s (lgWeight :: Nat) = ReqCompactor 
+data ReqCompactor (lgWeight :: Nat) s = ReqCompactor 
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
   -- State
@@ -47,13 +45,33 @@ data ReqCompactor s (lgWeight :: Nat) = ReqCompactor
   , rcBuffer :: !(MutVar s (DoubleBuffer s))
   }
 
+instance TakeSnapshot (ReqCompactor k) where
+  data Snapshot (ReqCompactor k) = ReqCompactorSnapshot
+    { snapshotCompactorRankAccuracy :: !RankAccuracy
+    , snapshotCompactorRankAccuracyState :: !Word64 
+    , snapshotCompactorLastFlip :: !Bool
+    , snapshotCompactorSectionSizeFlt :: !Double
+    , snapshotCompactorSectionSize :: !Word32
+    , snapshotCompactorNumSections :: !Word8
+    , snapshotCompactorBuffer :: !(Snapshot DoubleBuffer)
+    }
+  takeSnapshot ReqCompactor{..} = ReqCompactorSnapshot rcRankAccuracy
+    <$> readURef rcState
+    <*> readURef rcLastFlip
+    <*> readURef rcSectionSizeFlt
+    <*> readURef rcSectionSize
+    <*> readURef rcNumSections
+    <*> (readMutVar rcBuffer >>= takeSnapshot)
+
+deriving instance Show (Snapshot (ReqCompactor k))
+
 nomCapMult :: Num a => a
 nomCapMult = 2
 
 toInt :: Integral a => a -> Int
 toInt = fromIntegral 
 
-compact :: (PrimMonad m, MonadIO m) => ReqCompactor (PrimState m) k -> m (CompactorReturn (PrimState m))
+compact :: (PrimMonad m, MonadIO m) => ReqCompactor k (PrimState m) -> m (CompactorReturn (PrimState m))
 compact this = do
   startBuffSize <- getCount =<< getBuffer this
   startNominalCapacity <- getNominalCapacity this
@@ -64,7 +82,7 @@ compact this = do
       sectionsToCompact = min trailingOnes $ fromIntegral numSections
   compactionRange <- computeCompactionRange this sectionsToCompact
   let compactionStart = fromIntegral $ compactionRange .&. 0xFFFFFFFF -- low 32
-      compactionEnd = fromIntegral $ compactionRange `shiftR` 32 -- hight 32
+      compactionEnd = fromIntegral $ compactionRange `shiftR` 32 -- high 32
   when (compactionEnd - compactionStart >= 2) $
     error "invariant violated: compaction range too large"
   coin <- if (state .&. 1 == 1)
@@ -85,38 +103,38 @@ compact this = do
     , crDoubleBuffer = promote
     }
 
-getBuffer :: PrimMonad m => ReqCompactor (PrimState m) k -> m (DoubleBuffer (PrimState m))
+getBuffer :: PrimMonad m => ReqCompactor k (PrimState m) -> m (DoubleBuffer (PrimState m))
 getBuffer = readMutVar . rcBuffer
 
 flipCoin :: (PrimMonad m, MonadIO m) => m Bool
 flipCoin = create >>= uniform
 
-getCoin :: PrimMonad m => ReqCompactor (PrimState m) k -> m Bool
+getCoin :: PrimMonad m => ReqCompactor k (PrimState m) -> m Bool
 getCoin = readURef . rcLastFlip
 
-getLgWeight :: KnownNat n => ReqCompactor s n -> Word8
-getLgWeight = fromIntegral . natVal
+getLgWeight :: forall k s. KnownNat k => ReqCompactor k s -> Word8
+getLgWeight _ = fromIntegral (natVal (Proxy :: Proxy k))
 
-getNominalCapacity :: PrimMonad m => ReqCompactor (PrimState m) k -> m Int
+getNominalCapacity :: PrimMonad m => ReqCompactor k (PrimState m) -> m Int
 getNominalCapacity compactor = do
   numSections <- readURef $ rcNumSections compactor
   sectionSize <- readURef $ rcSectionSize compactor
   pure $ nomCapMult * (toInt numSections) * (toInt sectionSize)
 
-getNumSections :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word8
+getNumSections :: PrimMonad m => ReqCompactor k (PrimState m) -> m Word8
 getNumSections = readURef . rcNumSections
 
-getSectionSizeFlt :: PrimMonad m => ReqCompactor (PrimState m) k -> m Double
+getSectionSizeFlt :: PrimMonad m => ReqCompactor k (PrimState m) -> m Double
 getSectionSizeFlt = readURef . rcSectionSizeFlt
 
-getState :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word64
+getState :: PrimMonad m => ReqCompactor k (PrimState m) -> m Word64
 getState = readURef . rcState
 
 merge 
   :: (PrimMonad m, s ~ PrimState m)
-  => ReqCompactor (PrimState m) lgWeight 
-  -> ReqCompactor (PrimState m) lgWeight 
-  -> m (ReqCompactor s lgWeight)
+  => ReqCompactor lgWeight (PrimState m) 
+  -> ReqCompactor lgWeight (PrimState m) 
+  -> m (ReqCompactor lgWeight s)
 merge this otherCompactor = do
   ensureMaxSections
   buff <- getBuffer this
@@ -137,7 +155,7 @@ merge this otherCompactor = do
       -- loop until no adjustments can be made
       when adjusted ensureMaxSections
 
-ensureEnoughSections :: PrimMonad m => ReqCompactor (PrimState m) a -> m Bool
+ensureEnoughSections :: PrimMonad m => ReqCompactor k (PrimState m) -> m Bool
 ensureEnoughSections compactor = do
   sectionSizeFlt <- readURef $ rcSectionSizeFlt compactor
   let szf = sectionSizeFlt / sqrt2
@@ -155,7 +173,7 @@ ensureEnoughSections compactor = do
        pure True
      else pure False
 
-computeCompactionRange :: PrimMonad m => ReqCompactor (PrimState m) a -> Int -> m Word64
+computeCompactionRange :: PrimMonad m => ReqCompactor k (PrimState m) -> Int -> m Word64
 computeCompactionRange this secsToCompact = do
   buffSize <- getCount =<< getBuffer this
   nominalCapacity <- getNominalCapacity this

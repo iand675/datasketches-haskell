@@ -6,6 +6,17 @@ author:              "Author name here"
 maintainer:          "example@example.com"
 copyright:           "2021 Author name here"
 
+default-extensions:
+- BangPatterns
+- DataKinds
+- FlexibleInstances
+- KindSignatures
+- RecordWildCards
+- ScopedTypeVariables
+- StandaloneDeriving
+- TypeFamilies
+- TypeOperators
+
 extra-source-files:
 - README.md
 - ChangeLog.md
@@ -26,6 +37,7 @@ dependencies:
 - mtl
 - primitive
 - vector-algorithms
+- prettyprinter
 
 library:
   source-dirs: src

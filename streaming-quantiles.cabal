@@ -35,10 +35,21 @@ library
       Paths_streaming_quantiles
   hs-source-dirs:
       src
+  default-extensions:
+      BangPatterns
+      DataKinds
+      FlexibleInstances
+      KindSignatures
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TypeFamilies
+      TypeOperators
   build-depends:
       base >=4.7 && <5
     , mtl
     , mwc-random
+    , prettyprinter
     , primitive
     , vector
     , vector-algorithms
@@ -54,6 +65,16 @@ test-suite streaming-quantiles-test
       Paths_streaming_quantiles
   hs-source-dirs:
       test
+  default-extensions:
+      BangPatterns
+      DataKinds
+      FlexibleInstances
+      KindSignatures
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TypeFamilies
+      TypeOperators
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -61,6 +82,7 @@ test-suite streaming-quantiles-test
     , hspec-discover
     , mtl
     , mwc-random
+    , prettyprinter
     , primitive
     , streaming-quantiles
     , vector

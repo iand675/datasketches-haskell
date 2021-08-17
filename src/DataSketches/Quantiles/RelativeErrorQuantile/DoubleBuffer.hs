@@ -1,6 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE RecordWildCards #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
   ( DoubleBuffer
   , Capacity
@@ -24,7 +21,6 @@ module DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
   , sort
   , mergeSortIn
   , trimCount
-  , showDoubleBuffer
   ) where
 
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -38,7 +34,7 @@ import DataSketches.Quantiles.RelativeErrorQuantile.URef
 import Data.Vector.Algorithms.Intro (sortByBounds)
 import Data.Vector.Algorithms.Search
 import GHC.Stack
-import Debug.Trace
+import System.IO.Unsafe
 
 data DoubleBuffer s = DoubleBuffer
   { vec :: !(MutVar s (MUVector.MVector s Double))
@@ -47,6 +43,23 @@ data DoubleBuffer s = DoubleBuffer
   , growthIncrement :: !Int
   , spaceAtBottom :: !Bool
   }
+
+instance TakeSnapshot DoubleBuffer where
+  data Snapshot DoubleBuffer = DoubleBufferSnapshot
+    { dbSnapshotVec :: UVector.Vector Double
+    , dbSnapshotCount :: !Int
+    , dbSnapshotSorted :: !Bool
+    , dbSnapshotGrowthIncrement :: !Int
+    , dbSnapshotSpaceAtBottom :: !Bool
+    }
+  takeSnapshot DoubleBuffer{..} = DoubleBufferSnapshot 
+    <$> (readMutVar vec >>= UVector.freeze)
+    <*> readURef count
+    <*> readURef sorted
+    <*> pure growthIncrement
+    <*> pure spaceAtBottom
+
+deriving instance Show (Snapshot DoubleBuffer)
 
 type Capacity = Int
 type GrowthIncrement = Int
@@ -288,8 +301,3 @@ mergeSortIn this bufIn = do
 
 trimCount :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m ()
 trimCount DoubleBuffer{..} newCount = modifyURef count (\oldCount -> if newCount < oldCount then newCount else oldCount)
-
-showDoubleBuffer :: DoubleBuffer (PrimState IO) -> IO ()
-showDoubleBuffer buf@DoubleBuffer{..} = do
-  x <- UVector.freeze =<< getVector buf
-  print x
