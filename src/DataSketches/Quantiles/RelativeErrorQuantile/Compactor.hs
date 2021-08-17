@@ -19,9 +19,11 @@ import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import System.Random.MWC (create, Variate(uniform))
+import Control.Monad (when)
 import Control.Monad.Trans
 import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.URef
 
 
 data CompactorReturn = CompactorReturn
@@ -33,10 +35,10 @@ data ReqCompactor s (lgWeight :: Nat) = ReqCompactor
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
   -- State
-  , rcState :: !Word64
-  , rcSectionSizeFlt :: !Double
-  , rcSectionSize :: !Word32
-  , rcNumSections :: !Word8
+  , rcState :: !(URef s Word64)
+  , rcSectionSizeFlt :: !(URef s Double)
+  , rcSectionSize :: !(URef s Word32)
+  , rcNumSections :: !(URef s Word8)
   , rcBuffer :: DoubleBuffer s
   }
 
@@ -48,6 +50,9 @@ minK = 4
 
 nomCapMult :: Num a => a
 nomCapMult = 2
+
+toInt :: Integral a => a -> Int
+toInt = fromInteger . toInteger
 
 compact :: PrimMonad m => ReqCompactor (PrimState m) k -> CompactorReturn -> m (DoubleBuffer (PrimState m))
 compact = undefined
@@ -62,52 +67,75 @@ getLgWeight :: KnownNat n => ReqCompactor s n -> Word8
 getLgWeight = fromIntegral . natVal
 
 getNominalCapacity :: PrimMonad m => ReqCompactor (PrimState m) k -> m Int
-getNominalCapacity compactor = pure $ nomCapMult * (toInt $ rcNumSections compactor) * (toInt $ rcSectionSize compactor)
-  where 
-    toInt :: Integral a => a -> Int
-    toInt = fromInteger . toInteger
+getNominalCapacity compactor = do
+  numSections <- readURef $ rcNumSections compactor
+  sectionSize <- readURef $ rcSectionSize compactor
+  pure $ nomCapMult * (toInt numSections) * (toInt sectionSize)
 
 getNumSections :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word8
-getNumSections = pure . rcNumSections
+getNumSections = readURef . rcNumSections
 
 getSectionSizeFlt :: PrimMonad m => ReqCompactor (PrimState m) k -> m Double
-getSectionSizeFlt = pure . rcSectionSizeFlt
+getSectionSizeFlt = readURef . rcSectionSizeFlt
 
 getState :: PrimMonad m => ReqCompactor (PrimState m) k -> m Word64
-getState = pure . rcState
-
-isHighRankAccuracy :: PrimMonad m => ReqCompactor (PrimState m) k -> m Bool
-isHighRankAccuracy = pure . (HighRanksAreAccurate ==) . rcRankAccuracy
+getState = readURef . rcState
 
 merge 
   :: (PrimMonad m, s ~ PrimState m)
   => ReqCompactor (PrimState m) lgWeight 
   -> ReqCompactor (PrimState m) lgWeight 
   -> m (ReqCompactor s lgWeight)
-merge compactorA compactorB = do
-  _ <- ensureEnoughSections compactorA
-  let buff = rcBuffer compactorA
-  _ <- sort buff
-  otherBuff <- undefined -- copy the buffer from compactorB
-  _ <- sort otherBuff
+merge this otherCompactor = do
+  ensureMaxSections
+  let buff = rcBuffer this
+      otherBuff = rcBuffer otherCompactor
+  sort buff
+  sort otherBuff
   otherBuffIsBigger <- (>) <$> getCount otherBuff <*> getCount buff
   finalBuff <- if otherBuffIsBigger
      then mergeSortIn otherBuff buff
      else mergeSortIn buff otherBuff
-  pure $ compactorA
-    { rcState = rcState compactorA .|. rcState compactorB
-    , rcBuffer = finalBuff
-    }
+  otherState <- readURef $ rcState otherCompactor
+  modifyURef (rcState this) (.|. otherState)
+  pure $ this { rcBuffer = finalBuff }
+  where
+    ensureMaxSections = do
+      adjusted <- ensureEnoughSections this
+      -- loop until we no adjustments can be made
+      when adjusted ensureMaxSections
 
 ensureEnoughSections :: PrimMonad m => ReqCompactor (PrimState m) a -> m Bool
 ensureEnoughSections compactor = do
-  let szf = rcSectionSizeFlt compactor / sqrt2
+  sectionSizeFlt <- readURef $ rcSectionSizeFlt compactor
+  let szf = sectionSizeFlt / sqrt2
       ne = nearestEven szf
-  if (rcState compactor >= (1 `shiftL` (fromInteger $ toInteger $ pred $ rcNumSections compactor)))
-     && rcSectionSize compactor > minK
+  state <- readURef $ rcState compactor
+  numSections <- readURef $ rcNumSections compactor
+  sectionSize <- readURef $ rcSectionSize compactor
+  if (state >= (1 `shiftL` (toInt $ numSections - 1)))
+     && sectionSize > minK
      && ne >= minK
-     then undefined 
+     then do
+       writeURef (rcSectionSizeFlt compactor) szf
+       writeURef (rcSectionSize compactor) $ fromIntegral ne
+       writeURef (rcNumSections compactor) $ numSections `shiftL` 1
+       pure True
      else pure False
+
+computeCompactionRange :: PrimMonad m => ReqCompactor (PrimState m) a -> Int -> m Word64
+computeCompactionRange this secsToCompact = do
+  buffSize <- getCount $ rcBuffer this
+  nominalCapacity <- getNominalCapacity this
+  numSections <- readURef $ rcNumSections this
+  sectionSize <- readURef $ rcSectionSize this
+  let nonCompact :: Int
+      nonCompact = floor $ fromIntegral nominalCapacity / 2 + fromIntegral (toInt numSections - secsToCompact * toInt sectionSize)
+      (low, high) =
+        case rcRankAccuracy this of
+            HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact)
+            LowRanksAreAccurate -> (fromIntegral nonCompact, fromIntegral buffSize)
+  pure $ low + (high `shiftL` 32)
 
 nearestEven :: Double -> Int
 nearestEven = (shiftL 1) . round . (/ 2)
