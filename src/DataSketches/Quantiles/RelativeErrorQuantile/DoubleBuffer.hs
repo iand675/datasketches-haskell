@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
   ( DoubleBuffer
+  , EvensOrOdds (..)
   , append
   , ensureCapacity
   , getCountWithCriterion

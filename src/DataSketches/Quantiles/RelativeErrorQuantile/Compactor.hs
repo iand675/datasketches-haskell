@@ -14,7 +14,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
   ) where
 
 import GHC.TypeLits
-import Data.Bits ((.|.), shiftL)
+import Data.Bits ((.&.), (.|.), complement, countTrailingZeros, shiftL, shiftR)
 import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -26,9 +26,10 @@ import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
 import DataSketches.Quantiles.RelativeErrorQuantile.URef
 
 
-data CompactorReturn = CompactorReturn
-  { deltaRetItems :: !Int
-  , deltaNominalSize :: !Int
+data CompactorReturn s = CompactorReturn
+  { crDeltaRetItems :: !Int
+  , crDeltaNominalSize :: !Int
+  , crDoubleBuffer :: !(DoubleBuffer s)
   }
 
 data ReqCompactor s (lgWeight :: Nat) = ReqCompactor 
@@ -36,10 +37,11 @@ data ReqCompactor s (lgWeight :: Nat) = ReqCompactor
   { rcRankAccuracy :: !RankAccuracy
   -- State
   , rcState :: !(URef s Word64)
+  , rcLastFlip :: !(URef s Bool)
   , rcSectionSizeFlt :: !(URef s Double)
   , rcSectionSize :: !(URef s Word32)
   , rcNumSections :: !(URef s Word8)
-  , rcBuffer :: DoubleBuffer s
+  , rcBuffer :: !(DoubleBuffer s)
   }
 
 sqrt2 :: Double
@@ -54,14 +56,50 @@ nomCapMult = 2
 toInt :: Integral a => a -> Int
 toInt = fromInteger . toInteger
 
-compact :: PrimMonad m => ReqCompactor (PrimState m) k -> CompactorReturn -> m (DoubleBuffer (PrimState m))
-compact = undefined
+compact :: (PrimMonad m, MonadIO m) => ReqCompactor (PrimState m) k -> m (CompactorReturn (PrimState m))
+compact this = do
+  startBuffSize <- getCount $ rcBuffer this
+  startNominalCapacity <- getNominalCapacity this
+  numSections <- readURef $ rcNumSections this
+  sectionSize <- readURef $ rcSectionSize this
+  state <- readURef $ rcState this
+  let trailingOnes = countTrailingZeros $ complement state
+      sectionsToCompact = min trailingOnes $ fromIntegral numSections
+  compactionRange <- computeCompactionRange this sectionsToCompact
+  let compactionStart = fromIntegral $ compactionRange .&. 0xFFFFFFFF -- low 32
+      compactionEnd = fromIntegral $ compactionRange `shiftR` 32 -- hight 32
+  when (compactionEnd - compactionStart >= 2) $
+    error "invariant violated: compaction range too large"
+  coin <- if (state .&. 1 == 1)
+     then readURef $ rcLastFlip this
+     else flipCoin
+  writeURef (rcLastFlip this) coin
+  let buff = rcBuffer this
+  promote <- getEvensOrOdds buff compactionStart compactionEnd $ toEvensAndOdds coin
+  trimCount buff $ startBuffSize - (compactionEnd - compactionStart)
+  writeURef (rcState this) $ state + 1
+  ensureEnoughSections this
+  endBuffSize <- getCount $ rcBuffer this
+  promoteBuffSize <- getCount promote
+  endNominalCapacity <- getNominalCapacity this
+  pure $ CompactorReturn
+    { crDeltaRetItems = endBuffSize - startBuffSize + promoteBuffSize
+    , crDeltaNominalSize = endNominalCapacity - startNominalCapacity
+    , crDoubleBuffer = promote
+    }
+  where
+    toEvensAndOdds True = Evens
+    toEvensAndOdds False = Odds
+
 
 getBuffer :: ReqCompactor s k -> DoubleBuffer s
 getBuffer = rcBuffer
 
-getCoin :: (PrimMonad m, MonadIO m) => m Bool
-getCoin = create >>= uniform
+flipCoin :: (PrimMonad m, MonadIO m) => m Bool
+flipCoin = create >>= uniform
+
+getCoin :: PrimMonad m => ReqCompactor (PrimState m) k -> m Bool
+getCoin = readURef . rcLastFlip
 
 getLgWeight :: KnownNat n => ReqCompactor s n -> Word8
 getLgWeight = fromIntegral . natVal
@@ -102,7 +140,7 @@ merge this otherCompactor = do
   where
     ensureMaxSections = do
       adjusted <- ensureEnoughSections this
-      -- loop until we no adjustments can be made
+      -- loop until no adjustments can be made
       when adjusted ensureMaxSections
 
 ensureEnoughSections :: PrimMonad m => ReqCompactor (PrimState m) a -> m Bool
