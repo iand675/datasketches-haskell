@@ -207,7 +207,7 @@ sort buf@DoubleBuffer{..} = do
     sortByBounds compare vec start end
     writeURef sorted True
 
-mergeSortIn :: HasCallStack => DoubleBuffer (PrimState IO) -> DoubleBuffer (PrimState IO) -> IO ()
+mergeSortIn :: (PrimMonad m, HasCallStack) => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m ()
 mergeSortIn this bufIn = do
   sort this
   sort bufIn
@@ -234,10 +234,6 @@ mergeSortIn this bufIn = do
       let i = count_ - 1
       let j = bufInLen - 1
       let k = totalLength
-      print $ MUVector.length thisBuf
-      print $ MUVector.length thatBuf
-      print =<< UVector.freeze thisBuf
-      print =<< UVector.freeze thatBuf
       mergeDownwards thisBuf thatBuf i j (k - 1)
   pure ()
   where

@@ -124,8 +124,8 @@ merge this otherCompactor = do
   sort otherBuff
   otherBuffIsBigger <- (>) <$> getCount otherBuff <*> getCount buff
   finalBuff <- if otherBuffIsBigger
-     then mergeSortIn otherBuff buff
-     else mergeSortIn buff otherBuff
+     then mergeSortIn otherBuff buff >> pure otherBuff
+     else mergeSortIn buff otherBuff >> pure buff
   otherState <- readURef $ rcState otherCompactor
   modifyURef (rcState this) (.|. otherState)
   writeMutVar (rcBuffer this) finalBuff
