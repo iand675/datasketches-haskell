@@ -71,7 +71,7 @@ nomCapMult = 2
 toInt :: Integral a => a -> Int
 toInt = fromIntegral 
 
-compact :: (PrimMonad m, MonadIO m) => ReqCompactor k (PrimState m) -> m (CompactorReturn (PrimState m))
+compact :: (PrimMonad m) => ReqCompactor k (PrimState m) -> m (CompactorReturn (PrimState m))
 compact this = do
   startBuffSize <- getCount =<< getBuffer this
   startNominalCapacity <- getNominalCapacity this
@@ -106,7 +106,7 @@ compact this = do
 getBuffer :: PrimMonad m => ReqCompactor k (PrimState m) -> m (DoubleBuffer (PrimState m))
 getBuffer = readMutVar . rcBuffer
 
-flipCoin :: (PrimMonad m, MonadIO m) => m Bool
+flipCoin :: (PrimMonad m) => m Bool
 flipCoin = create >>= uniform
 
 getCoin :: PrimMonad m => ReqCompactor k (PrimState m) -> m Bool

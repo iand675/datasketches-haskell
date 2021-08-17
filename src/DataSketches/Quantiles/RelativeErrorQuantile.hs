@@ -228,7 +228,7 @@ grow this = do
   maxNominalCapacity <- computeMaxNominalSize this
   writeURef (maxNominalCapacitiesSize this) maxNominalCapacity
 
-compress :: (PrimMonad m, MonadIO m) => ReqSketch (PrimState m) k -> m ()
+compress :: (PrimMonad m) => ReqSketch (PrimState m) k -> m ()
 compress this = do
   compactors <- getCompactors this
   for_ (Vector.indexed compactors) $ \(height, compactor) -> do
@@ -248,7 +248,7 @@ compress this = do
   writeMutVar (aux this) Nothing
 
 merge 
-  :: (PrimMonad m, s ~ PrimState m, MonadIO m)
+  :: (PrimMonad m, s ~ PrimState m)
   => ReqSketch s k 
   -> ReqSketch s k 
   -> m (ReqSketch s k)
@@ -298,7 +298,7 @@ merge this other = do
 
 -- TODO reset?
 
-update :: (PrimMonad m, MonadIO m) => ReqSketch (PrimState m) k -> Double -> m ()
+update :: (PrimMonad m) => ReqSketch (PrimState m) k -> Double -> m ()
 update this item = do
   when (not $ isNaN item) $ do
     isEmpty <- getIsEmpty this
