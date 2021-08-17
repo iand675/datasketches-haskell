@@ -40,3 +40,5 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - streaming-quantiles
+    - hspec
+    - hspec-discover

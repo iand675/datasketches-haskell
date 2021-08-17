@@ -48,12 +48,15 @@ test-suite streaming-quantiles-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      DoubleBufferSpec
       Paths_streaming_quantiles
   hs-source-dirs:
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , hspec
+    , hspec-discover
     , mtl
     , mwc-random
     , primitive

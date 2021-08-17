@@ -1,6 +1,10 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeOperators #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
-  ( cumulativeDistributionFunction  
+  ( ReqSketch
+  , mkReqSketch
+  , cumulativeDistributionFunction  
   , RankAccuracy(..)
   , rankAccuracy
   , relativeStandardError
@@ -47,6 +51,9 @@ data ReqSketch s k = ReqSketch
   , aux :: ()
   , compactors :: MVector.MVector s (ReqCompactor s k)
   }
+
+mkReqSketch :: (PrimMonad m, 4 <= k, k <= 1024, (k `Mod` 2) ~ 0) => RankAccuracy -> m (ReqSketch (PrimState m) k)
+mkReqSketch = undefined
 
 getNumLevels :: ReqSketch s k -> Int
 getNumLevels = MVector.length . compactors
@@ -116,6 +123,7 @@ ranks s values = do
 rankUpperBound :: ReqSketch s k -> Double -> Int -> Double
 rankUpperBound = undefined
 
+-- | Renamed from isEmpty
 null :: (PrimMonad m) => ReqSketch (PrimState m) k -> m Bool
 null = fmap (== 0) . readURef . totalN
 

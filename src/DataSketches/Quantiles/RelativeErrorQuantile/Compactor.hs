@@ -23,6 +23,7 @@ import System.Random.MWC (create, Variate(uniform))
 import Control.Monad (when)
 import Control.Monad.Trans
 import Control.Monad.Primitive
+import DataSketches.Quantiles.RelativeErrorQuantile.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
 import DataSketches.Quantiles.RelativeErrorQuantile.URef
 
@@ -45,17 +46,11 @@ data ReqCompactor s (lgWeight :: Nat) = ReqCompactor
   , rcBuffer :: !(MutVar s (DoubleBuffer s))
   }
 
-sqrt2 :: Double
-sqrt2 = sqrt 2
-
-minK :: Num a => a
-minK = 4
-
 nomCapMult :: Num a => a
 nomCapMult = 2
 
 toInt :: Integral a => a -> Int
-toInt = fromInteger . toInteger
+toInt = fromIntegral 
 
 compact :: (PrimMonad m, MonadIO m) => ReqCompactor (PrimState m) k -> m (CompactorReturn (PrimState m))
 compact this = do
@@ -76,7 +71,7 @@ compact this = do
      else flipCoin
   writeURef (rcLastFlip this) coin
   buff <- getBuffer this
-  promote <- getEvensOrOdds buff compactionStart compactionEnd $ toEvensAndOdds coin
+  promote <- getEvensOrOdds buff compactionStart compactionEnd coin
   trimCount buff $ startBuffSize - (compactionEnd - compactionStart)
   writeURef (rcState this) $ state + 1
   ensureEnoughSections this
@@ -88,9 +83,6 @@ compact this = do
     , crDeltaNominalSize = endNominalCapacity - startNominalCapacity
     , crDoubleBuffer = promote
     }
-  where
-    toEvensAndOdds True = Evens
-    toEvensAndOdds False = Odds
 
 getBuffer :: PrimMonad m => ReqCompactor (PrimState m) k -> m (DoubleBuffer (PrimState m))
 getBuffer = readMutVar . rcBuffer
