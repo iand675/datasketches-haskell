@@ -1,5 +1,7 @@
+{-# LANGUAGE ConstraintKinds #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
   ( ReqSketch
+  , ValidK
   , mkReqSketch
   , cumulativeDistributionFunction  
   , RankAccuracy(..)
@@ -54,7 +56,9 @@ data ReqSketch s k = ReqSketch
   , compactors :: !(MutVar s (Vector.Vector (ReqCompactor k s)))
   }
 
-mkReqSketch :: (PrimMonad m, 4 <= k, k <= 1024, (k `Mod` 2) ~ 0) => RankAccuracy -> m (ReqSketch (PrimState m) k)
+type ValidK k = (4 <= k, k <= 1024, (k `Mod` 2) ~ 0)
+
+mkReqSketch :: (PrimMonad m, ValidK k) => RankAccuracy -> m (ReqSketch (PrimState m) k)
 mkReqSketch = undefined
 
 getCompactors :: PrimMonad m => ReqSketch (PrimState m) k -> m (Vector.Vector (ReqCompactor k (PrimState m)))
