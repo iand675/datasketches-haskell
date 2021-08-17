@@ -29,6 +29,7 @@ import Control.Monad (when)
 import Control.Monad.Primitive
 import Data.Bits (shiftL)
 import qualified Data.Vector.Mutable as MVector
+import Data.Primitive.MutVar
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -49,7 +50,7 @@ data ReqSketch s k = ReqSketch
   , maxValue :: !(URef s Double )
   , retainedItems :: !(URef s Int)
   , maxNominalCapacitiesSize :: !Int
-  , aux :: ()
+  , aux :: !(MutVar s (Maybe ()))
   , compactors :: MVector.MVector s (ReqCompactor s k)
   }
 
@@ -64,6 +65,9 @@ getIsEmpty = fmap (== 0) . readURef . totalN
 
 getN :: PrimMonad m => ReqSketch (PrimState m) k -> m Word64
 getN = readURef . totalN
+
+getRetainedItems :: PrimMonad m => ReqSketch (PrimState m) k -> m Int
+getRetainedItems = readURef . retainedItems
 
 validateSplits :: [Double] -> ()
 validateSplits (s:splits) = const () $ foldl check s splits
@@ -112,7 +116,7 @@ cumulativeDistributionFunction this splitPoints = do
     else pure Nothing
 
 rankAccuracy :: ReqSketch s k -> RankAccuracy
-rankAccuracy = undefined
+rankAccuracy = rankAccuracySetting
 
 relativeStandardError :: ReqSketch s k -> Int -> Double -> RankAccuracy -> Int -> Double
 relativeStandardError = undefined 
@@ -185,17 +189,66 @@ isLessThanOrEqual s = case criterion s of
   (:<) -> False
   (:<=) -> True
 
+grow :: PrimMonad m => ReqSketch (PrimState m) k -> m ()
+grow this = do
+  let lgWeight = getNumLevels this
+  
+  undefined
+
+compress :: PrimMonad m => ReqSketch (PrimState m) k -> m ()
+compress this = undefined
+
 merge 
   :: (PrimMonad m, s ~ PrimState m)
   => ReqSketch s k 
   -> ReqSketch s k 
   -> m (ReqSketch s k)
-merge this other = undefined
+merge this other = do
+  otherIsEmpty <- getIsEmpty other
+  when (not otherIsEmpty) $ do
+    let rankAccuracy = rankAccuracySetting this
+        otherRankAccuracy = rankAccuracySetting other
+    when (rankAccuracy /= otherRankAccuracy) $ error "Both sketches must have the same HighRankAccuracy setting."
+    -- update total
+    otherN <- getN other
+    modifyURef (totalN this) (+ otherN)
+    -- update the min and max values
+    thisMin <- minimum this
+    thisMax <- maximum this
+    otherMin <- minimum other
+    otherMax <- maximum other
+    when (isNaN thisMin || otherMin < thisMin) $ do
+      writeURef (minValue this) otherMin
+    when (isNaN thisMax || otherMax < thisMax) $ do
+      writeURef (maxValue this) otherMax
+    -- grow until this has at least as many compactors as other
+    undefined
+  pure this
 
 -- TODO reset?
 
 update :: PrimMonad m => ReqSketch (PrimState m) k -> Double -> m ()
-update = undefined
+update this item = do
+  when (not $ isNaN item) $ do
+    isEmpty <- getIsEmpty this
+    if isEmpty
+       then do
+         writeURef (minValue this) item
+         writeURef (maxValue this) item
+       else do
+         min_ <- minimum this
+         max_ <- maximum this
+         when (item < min_) $ writeURef (minValue this) item
+         when (item > max_) $ writeURef (maxValue this) item
+    compactor <- MVector.read (compactors this) 0
+    buff <- Compactor.getBuffer compactor
+    modifyURef (retainedItems this) (+1)
+    modifyURef (totalN this) (+1)
+    retItems_ <-  getRetainedItems this
+    when (retItems_ < maxNominalCapacitiesSize this) $ do
+       DoubleBuffer.sort buff
+       compress this
+    writeMutVar (aux this) Nothing
 
 -- Private pure bits
 
