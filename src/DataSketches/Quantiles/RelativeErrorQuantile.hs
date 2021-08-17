@@ -25,6 +25,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , update
   ) where
 
+import Control.Monad (when)
 import Control.Monad.Primitive
 import Data.Bits (shiftL)
 import qualified Data.Vector.Mutable as MVector
@@ -58,8 +59,57 @@ mkReqSketch = undefined
 getNumLevels :: ReqSketch s k -> Int
 getNumLevels = MVector.length . compactors
 
-cumulativeDistributionFunction :: PrimMonad m => [Double] -> ReqSketch (PrimState m) k -> m [Double]
-cumulativeDistributionFunction splitPoints = undefined
+getIsEmpty :: PrimMonad m => ReqSketch (PrimState m) k -> m Bool
+getIsEmpty = fmap (== 0) . readURef . totalN
+
+getN :: PrimMonad m => ReqSketch (PrimState m) k -> m Word64
+getN = readURef . totalN
+
+validateSplits :: [Double] -> ()
+validateSplits (s:splits) = const () $ foldl check s splits
+  where
+    check v lastV
+      | isInfinite v = error "Values must be finite"
+      | v <= lastV = error "Values must be unique and monotonically increasing"
+      | otherwise = v
+
+getCounts :: (PrimMonad m, KnownNat k) => ReqSketch (PrimState m) k -> [Double] -> m [Word64]
+getCounts this values = do
+  let numValues = length values
+      numCompactors = MVector.length $ compactors this
+      ans = take numValues $ repeat 0
+  isEmpty <- getIsEmpty this
+  if isEmpty
+    then pure []
+    else MVector.ifoldM doCount ans $ compactors this
+  where
+    doCount acc index compactor = do
+      let wt = (1 `shiftL` fromIntegral (Compactor.getLgWeight compactor)) :: Word64
+      buff <- Compactor.getBuffer compactor
+      let updateCounts buff value = do
+            count_ <- DoubleBuffer.getCountWithCriterion buff (values !! index) (criterion this)
+            pure $ fromIntegral value + fromIntegral count_ * wt
+      mapM (updateCounts buff) acc
+
+getPMForCDF :: (PrimMonad m, KnownNat k) => ReqSketch (PrimState m) k -> [Double] -> m [Word64]
+getPMForCDF this splits = do
+  pure $ validateSplits splits
+  let numSplits = length splits
+      numBuckets = numSplits -- + 1
+  splitCounts <- getCounts this splits
+  n <- getN this
+  pure $ (++ [n]) $ take numBuckets $ splitCounts
+
+cumulativeDistributionFunction :: (PrimMonad m, KnownNat k) => ReqSketch (PrimState m) k -> [Double] -> m (Maybe [Double])
+cumulativeDistributionFunction this splitPoints = do
+  isEmpty <- getIsEmpty this
+  if (not isEmpty)
+    then do
+      let numBuckets = length splitPoints + 1
+      buckets <- getPMForCDF this splitPoints
+      n <- getN this
+      pure $ Just $ (/ fromIntegral n) . fromIntegral <$> buckets
+    else pure Nothing
 
 rankAccuracy :: ReqSketch s k -> RankAccuracy
 rankAccuracy = undefined
