@@ -24,6 +24,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
   , sort
   , mergeSortIn
   , trimCount
+  , showDoubleBuffer
   ) where
 
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -35,8 +36,9 @@ import qualified Data.Vector.Unboxed as UVector
 import qualified Data.Vector.Unboxed.Mutable as MUVector
 import DataSketches.Quantiles.RelativeErrorQuantile.URef
 import Data.Vector.Algorithms.Intro (sortByBounds)
-import Data.Vector.Algorithms.Search (binarySearchPBounds)
+import Data.Vector.Algorithms.Search
 import GHC.Stack
+import Debug.Trace
 
 data DoubleBuffer s = DoubleBuffer
   { vec :: !(MutVar s (MUVector.MVector s Double))
@@ -116,26 +118,24 @@ ensureCapacity buf@DoubleBuffer{..} newCapacity = do
 
 getCountWithCriterion :: PrimMonad m => DoubleBuffer (PrimState m) -> Double -> Criterion -> m Int
 getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
+  sort buf
+  count_ <- getCount buf
   vec <- getVector buf
-  sorted_ <- readURef sorted
-  unless sorted_ $ sort buf
   (low, high) <- if spaceAtBottom
     then do
       capacity_ <- getCapacity buf
-      count_ <- readURef count
-      pure (capacity_ - count_, capacity_ - 1)
-    else do
-      high <- (\x -> x - 1) <$> readURef count
-      pure (0, high)
+      pure (capacity_ - count_, capacity_)
+    else pure (0, count_)
   
+  v <- UVector.freeze vec
   ix <- binarySearchPBounds pred vec low high
-  pure $! if ix == MUVector.length vec 
+  pure $! if ix == high - low
     then 0
-    else ix - low + 1 
+    else ix - low
   where
     pred = case criterion of
-      (:<) -> (< value)
-      (:<=) -> (<= value)
+      (:<) -> (>= value)
+      (:<=) -> (> value)
   
 -- data EvensOrOdds = Evens | Odds
 
@@ -235,6 +235,9 @@ mergeSortIn this bufIn = do
       let j = bufInLen - 1
       let k = totalLength
       mergeDownwards thisBuf thatBuf i j (k - 1)
+
+  modifyURef (count this) (+ bufInLen)
+  writeURef (sorted this) True
   pure ()
   where
     mergeUpwards thisBuf thatBuf capacity_ bufInCapacity_ = go

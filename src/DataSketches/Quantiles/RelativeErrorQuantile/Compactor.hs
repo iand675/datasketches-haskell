@@ -11,6 +11,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
   , getNominalCapacity
   , getNumSections
   , merge
+  , nearestEven
   ) where
 
 import GHC.TypeLits
@@ -169,4 +170,4 @@ computeCompactionRange this secsToCompact = do
   pure $ low + (high `shiftL` 32)
 
 nearestEven :: Double -> Int
-nearestEven = (shiftL 1) . round . (/ 2)
+nearestEven x = round (x / 2) `shiftL` 1

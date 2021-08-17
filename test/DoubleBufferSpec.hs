@@ -2,6 +2,7 @@ module DoubleBufferSpec where
 
 import Control.Monad
 import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import qualified Data.Vector.Unboxed as UV
 import Test.Hspec
 import qualified Data.List
@@ -32,6 +33,8 @@ spec = do
     checkAppendAndSpace False
   describe "checkEnsureCapacity" $ do
     mapM_ checkEnsureCapacity [True, False]
+  describe "checkCountLessThanImpl" $ do
+    mapM_ checkCountLessThanImpl [True, False]
 
 checkGetEvensOrOdds :: Bool -> Bool -> Spec
 checkGetEvensOrOdds odds spaceAtBottom = 
@@ -93,3 +96,21 @@ checkEnsureCapacity spaceAtBottom = it ("works for spaceAtBottom=" ++ show space
   x2 `shouldBe` 2
   x3 <- buf ! 2
   x3 `shouldBe` 3
+
+checkCountLessThanImpl :: Bool -> Spec
+checkCountLessThanImpl spaceAtBottom = it ("works for spaceAtBottom=" ++ show spaceAtBottom) $ do 
+  buf <- mkBuffer 7 0 spaceAtBottom
+  mapM_ (append buf) [1..7]
+  sort buf
+  buf2 <- mkBuffer 7 0 spaceAtBottom
+  mergeSortIn buf2 buf
+  do
+    count_ <- getCountWithCriterion buf2 4 (:<)
+    count_ `shouldBe` 3
+  mergeSortIn buf2 buf
+  do
+    count_ <- getCountWithCriterion buf2 4 (:<)
+    count_ `shouldBe` 6
+  do
+    count_ <- getCount buf2
+    count_ `shouldBe` 14

@@ -48,7 +48,9 @@ test-suite streaming-quantiles-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      CompactorSpec
       DoubleBufferSpec
+      RelativeErrorQuantileSpec
       Paths_streaming_quantiles
   hs-source-dirs:
       test
