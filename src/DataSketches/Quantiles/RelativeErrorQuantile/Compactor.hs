@@ -1,6 +1,6 @@
 module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
   ( ReqCompactor
-  , CompactorReturn
+  , CompactorReturn (..)
   , compact
   , getBuffer
   , getCoin
