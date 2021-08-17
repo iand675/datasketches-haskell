@@ -75,7 +75,7 @@ count s value = fromIntegral <$> do
     else do
       let go accum compactor = do
             let wt = (1 `shiftL` fromIntegral (Compactor.getLgWeight compactor)) :: Word64
-            let buf = Compactor.getBuffer compactor
+            buf <- Compactor.getBuffer compactor
             count_ <- DoubleBuffer.getCountWithCriterion buf value (criterion s)
             pure (accum + (fromIntegral count_ * wt))
       MVector.foldM go 0 (compactors s)

@@ -15,6 +15,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
 
 import GHC.TypeLits
 import Data.Bits ((.&.), (.|.), complement, countTrailingZeros, shiftL, shiftR)
+import Data.Primitive.MutVar
 import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -41,7 +42,7 @@ data ReqCompactor s (lgWeight :: Nat) = ReqCompactor
   , rcSectionSizeFlt :: !(URef s Double)
   , rcSectionSize :: !(URef s Word32)
   , rcNumSections :: !(URef s Word8)
-  , rcBuffer :: !(DoubleBuffer s)
+  , rcBuffer :: !(MutVar s (DoubleBuffer s))
   }
 
 sqrt2 :: Double
@@ -58,7 +59,7 @@ toInt = fromInteger . toInteger
 
 compact :: (PrimMonad m, MonadIO m) => ReqCompactor (PrimState m) k -> m (CompactorReturn (PrimState m))
 compact this = do
-  startBuffSize <- getCount $ rcBuffer this
+  startBuffSize <- getCount =<< getBuffer this
   startNominalCapacity <- getNominalCapacity this
   numSections <- readURef $ rcNumSections this
   sectionSize <- readURef $ rcSectionSize this
@@ -74,12 +75,12 @@ compact this = do
      then readURef $ rcLastFlip this
      else flipCoin
   writeURef (rcLastFlip this) coin
-  let buff = rcBuffer this
+  buff <- getBuffer this
   promote <- getEvensOrOdds buff compactionStart compactionEnd $ toEvensAndOdds coin
   trimCount buff $ startBuffSize - (compactionEnd - compactionStart)
   writeURef (rcState this) $ state + 1
   ensureEnoughSections this
-  endBuffSize <- getCount $ rcBuffer this
+  endBuffSize <- getCount buff
   promoteBuffSize <- getCount promote
   endNominalCapacity <- getNominalCapacity this
   pure $ CompactorReturn
@@ -91,9 +92,8 @@ compact this = do
     toEvensAndOdds True = Evens
     toEvensAndOdds False = Odds
 
-
-getBuffer :: ReqCompactor s k -> DoubleBuffer s
-getBuffer = rcBuffer
+getBuffer :: PrimMonad m => ReqCompactor (PrimState m) k -> m (DoubleBuffer (PrimState m))
+getBuffer = readMutVar . rcBuffer
 
 flipCoin :: (PrimMonad m, MonadIO m) => m Bool
 flipCoin = create >>= uniform
@@ -126,8 +126,8 @@ merge
   -> m (ReqCompactor s lgWeight)
 merge this otherCompactor = do
   ensureMaxSections
-  let buff = rcBuffer this
-      otherBuff = rcBuffer otherCompactor
+  buff <- getBuffer this
+  otherBuff <- getBuffer otherCompactor
   sort buff
   sort otherBuff
   otherBuffIsBigger <- (>) <$> getCount otherBuff <*> getCount buff
@@ -136,7 +136,8 @@ merge this otherCompactor = do
      else mergeSortIn buff otherBuff
   otherState <- readURef $ rcState otherCompactor
   modifyURef (rcState this) (.|. otherState)
-  pure $ this { rcBuffer = finalBuff }
+  writeMutVar (rcBuffer this) finalBuff
+  pure this
   where
     ensureMaxSections = do
       adjusted <- ensureEnoughSections this
@@ -163,7 +164,7 @@ ensureEnoughSections compactor = do
 
 computeCompactionRange :: PrimMonad m => ReqCompactor (PrimState m) a -> Int -> m Word64
 computeCompactionRange this secsToCompact = do
-  buffSize <- getCount $ rcBuffer this
+  buffSize <- getCount =<< getBuffer this
   nominalCapacity <- getNominalCapacity this
   numSections <- readURef $ rcNumSections this
   sectionSize <- readURef $ rcSectionSize this
