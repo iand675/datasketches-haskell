@@ -22,6 +22,7 @@
 -- ![ReqSketch Gaussian Error Quantiles - LowRankAccuracy](docs/images/ReqErrorLraK12SL11_LE.png)
 
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE TypeApplications #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
   ( ReqSketch
   , ValidK
@@ -57,6 +58,7 @@ import Data.Bits (shiftL)
 import Data.Vector ((!))
 import qualified Data.Vector as Vector
 import Data.Primitive.MutVar
+import Data.Proxy
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -70,7 +72,7 @@ import GHC.TypeLits
 import Prelude hiding (null, minimum, maximum)
 import Data.Maybe (isNothing)
 
-data ReqSketch k s = ReqSketch
+data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
   , criterion :: !Criterion
   , totalN :: !(URef s Word64)
@@ -79,7 +81,7 @@ data ReqSketch k s = ReqSketch
   , retainedItems :: !(URef s Int)
   , maxNominalCapacitiesSize :: !(URef s Int)
   , aux :: !(MutVar s (Maybe ReqAuxiliary))
-  , compactors :: !(MutVar s (Vector.Vector (ReqCompactor k s)))
+  , compactors :: !(MutVar s (Vector.Vector (ReqCompactor s)))
   }
 
 instance TakeSnapshot (ReqSketch k) where
@@ -92,7 +94,7 @@ instance TakeSnapshot (ReqSketch k) where
     , snapshotRetainedItems :: !Int
     , snapshotMaxNominalCapacitiesSize :: !Int
     -- , aux :: !(MutVar s (Maybe ()))
-    , snapshotCompactors :: !(Vector.Vector (Snapshot (ReqCompactor k)))
+    , snapshotCompactors :: !(Vector.Vector (Snapshot ReqCompactor))
     }
   takeSnapshot ReqSketch{..} = ReqSketchSnapshot rankAccuracySetting criterion
     <$> readURef totalN
@@ -106,7 +108,7 @@ deriving instance Show (Snapshot (ReqSketch k))
 
 type ValidK k = (4 <= k, k <= 1024, (k `Mod` 2) ~ 0)
 
-mkReqSketch :: forall k m. (PrimMonad m, ValidK k) => RankAccuracy -> m (ReqSketch k (PrimState m))
+mkReqSketch :: forall k m. (PrimMonad m, ValidK k, KnownNat k) => RankAccuracy -> m (ReqSketch k (PrimState m))
 mkReqSketch rank = do
   r <- ReqSketch rank (:<)
     <$> newURef 0
@@ -122,7 +124,7 @@ mkReqSketch rank = do
 getAux :: PrimMonad m => ReqSketch k (PrimState m) -> m (Maybe ReqAuxiliary)
 getAux = readMutVar . aux
 
-getCompactors :: PrimMonad m => ReqSketch k (PrimState m) -> m (Vector.Vector (ReqCompactor k (PrimState m)))
+getCompactors :: PrimMonad m => ReqSketch k (PrimState m) -> m (Vector.Vector (ReqCompactor (PrimState m)))
 getCompactors = readMutVar . compactors
 
 getNumLevels :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
@@ -133,6 +135,9 @@ getIsEmpty = fmap (== 0) . readURef . totalN
 
 getN :: PrimMonad m => ReqSketch k (PrimState m) -> m Word64
 getN = readURef . totalN
+
+getK :: forall k s. KnownNat k => ReqSketch k s -> Word32
+getK _ = fromIntegral (natVal (Proxy :: Proxy k))
 
 getRetainedItems :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getRetainedItems = readURef . retainedItems
@@ -394,15 +399,18 @@ computeTotalRetainedItems this = do
       buffSize <- DoubleBuffer.getCount buff
       pure $ buffSize + acc
 
-grow :: PrimMonad m => ReqSketch k (PrimState m) -> m ()
+grow :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> m ()
 grow this = do
-  lgWeight <- getNumLevels this
+  lgWeight <- fromIntegral <$> getNumLevels this
   compactors <- getCompactors this
-  let compactors' = Vector.snoc compactors $ undefined
+  let rankAccuracy = rankAccuracySetting this
+      sectionSize = getK this
+  newCompactor <- Compactor.mkReqCompactor lgWeight rankAccuracy sectionSize
+  let compactors' = Vector.snoc compactors $ newCompactor
   maxNominalCapacity <- computeMaxNominalSize this
   writeURef (maxNominalCapacitiesSize this) maxNominalCapacity
 
-compress :: (PrimMonad m) => ReqSketch k (PrimState m) -> m ()
+compress :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> m ()
 compress this = do
   compactors <- getCompactors this
   Vector.iforM_ compactors $ \height compactor -> do
@@ -423,7 +431,7 @@ compress this = do
 
 -- | Merge other sketch into this one.
 merge
-  :: (PrimMonad m, s ~ PrimState m)
+  :: (PrimMonad m, s ~ PrimState m, KnownNat k)
   => ReqSketch k s
   -> ReqSketch k s
   -> m (ReqSketch k s)
@@ -472,7 +480,7 @@ merge this other = do
         grow this
 
 -- | Updates this sketch with the given item.
-update :: (PrimMonad m) => ReqSketch k (PrimState m) -> Double -> m ()
+update :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> Double -> m ()
 update this item = do
   unless (isNaN item) $ do
     isEmpty <- getIsEmpty this

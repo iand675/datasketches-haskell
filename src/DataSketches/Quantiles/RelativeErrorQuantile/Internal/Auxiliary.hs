@@ -34,7 +34,7 @@ data MReqAuxiliary s = MReqAuxiliary
   , mraSize :: !Word64
   }
 
-mkAuxiliary :: (PrimMonad m, s ~ PrimState m, KnownNat k) => RankAccuracy -> Word64 -> Int -> Vector.Vector (ReqCompactor k s) -> m ReqAuxiliary
+mkAuxiliary :: (PrimMonad m, s ~ PrimState m) => RankAccuracy -> Word64 -> Int -> Vector.Vector (ReqCompactor s) -> m ReqAuxiliary
 mkAuxiliary rankAccuracy totalN retainedItems compactors = do
   items <- newMutVar =<< MUVector.new retainedItems
   let this = MReqAuxiliary

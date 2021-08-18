@@ -34,9 +34,10 @@ data CompactorReturn s = CompactorReturn
   , crDoubleBuffer :: !(DoubleBuffer s)
   }
 
-data ReqCompactor (lgWeight :: Nat) s = ReqCompactor
+data ReqCompactor s = ReqCompactor
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
+  , rcLgWeight :: !Word8
   -- State
   , rcState :: !(URef s Word64)
   , rcLastFlip :: !(URef s Bool)
@@ -46,8 +47,8 @@ data ReqCompactor (lgWeight :: Nat) s = ReqCompactor
   , rcBuffer :: !(MutVar s (DoubleBuffer s))
   }
 
-instance TakeSnapshot (ReqCompactor k) where
-  data Snapshot (ReqCompactor k) = ReqCompactorSnapshot
+instance TakeSnapshot ReqCompactor where
+  data Snapshot ReqCompactor = ReqCompactorSnapshot
     { snapshotCompactorRankAccuracy :: !RankAccuracy
     , snapshotCompactorRankAccuracyState :: !Word64
     , snapshotCompactorLastFlip :: !Bool
@@ -64,17 +65,18 @@ instance TakeSnapshot (ReqCompactor k) where
     <*> readURef rcNumSections
     <*> (readMutVar rcBuffer >>= takeSnapshot)
 
-deriving instance Show (Snapshot (ReqCompactor k))
+deriving instance Show (Snapshot ReqCompactor)
 
 mkReqCompactor
-  :: (KnownNat k, PrimMonad m)
-  => RankAccuracy
+  :: PrimMonad m
+  => Word8
+  -> RankAccuracy
   -> Word32
-  -> m (ReqCompactor k (PrimState m))
-mkReqCompactor rankAccuracy sectionSize = do
+  -> m (ReqCompactor (PrimState m))
+mkReqCompactor lgWeight rankAccuracy sectionSize = do
   let nominalCapacity = fromIntegral $ nomCapMulti * initNumberOfSections * sectionSize
   buff <- mkBuffer (nominalCapacity * 2) nominalCapacity (rankAccuracy == HighRanksAreAccurate)
-  ReqCompactor rankAccuracy
+  ReqCompactor rankAccuracy lgWeight
     <$> newURef 0
     <*> newURef False
     <*> newURef (fromIntegral sectionSize)
@@ -88,7 +90,7 @@ nomCapMult = 2
 toInt :: Integral a => a -> Int
 toInt = fromIntegral
 
-compact :: (PrimMonad m) => ReqCompactor k (PrimState m) -> m (CompactorReturn (PrimState m))
+compact :: (PrimMonad m) => ReqCompactor (PrimState m) -> m (CompactorReturn (PrimState m))
 compact this = do
   startBuffSize <- getCount =<< getBuffer this
   startNominalCapacity <- getNominalCapacity this
@@ -120,42 +122,42 @@ compact this = do
     , crDoubleBuffer = promote
     }
 
-getBuffer :: PrimMonad m => ReqCompactor k (PrimState m) -> m (DoubleBuffer (PrimState m))
+getLgWeight :: ReqCompactor s -> Word8
+getLgWeight = rcLgWeight
+
+getBuffer :: PrimMonad m => ReqCompactor (PrimState m) -> m (DoubleBuffer (PrimState m))
 getBuffer = readMutVar . rcBuffer
 
 flipCoin :: (PrimMonad m) => m Bool
 flipCoin = create >>= uniform
 
-getCoin :: PrimMonad m => ReqCompactor k (PrimState m) -> m Bool
+getCoin :: PrimMonad m => ReqCompactor (PrimState m) -> m Bool
 getCoin = readURef . rcLastFlip
 
-getLgWeight :: forall k s. KnownNat k => ReqCompactor k s -> Word8
-getLgWeight _ = fromIntegral (natVal (Proxy :: Proxy k))
-
-getNominalCapacity :: PrimMonad m => ReqCompactor k (PrimState m) -> m Int
+getNominalCapacity :: PrimMonad m => ReqCompactor (PrimState m) -> m Int
 getNominalCapacity compactor = do
   numSections <- readURef $ rcNumSections compactor
   sectionSize <- readURef $ rcSectionSize compactor
   pure $ nomCapMult * toInt numSections * toInt sectionSize
 
-getNumSections :: PrimMonad m => ReqCompactor k (PrimState m) -> m Word8
+getNumSections :: PrimMonad m => ReqCompactor (PrimState m) -> m Word8
 getNumSections = readURef . rcNumSections
 
-getSectionSizeFlt :: PrimMonad m => ReqCompactor k (PrimState m) -> m Double
+getSectionSizeFlt :: PrimMonad m => ReqCompactor (PrimState m) -> m Double
 getSectionSizeFlt = readURef . rcSectionSizeFlt
 
-getState :: PrimMonad m => ReqCompactor k (PrimState m) -> m Word64
+getState :: PrimMonad m => ReqCompactor (PrimState m) -> m Word64
 getState = readURef . rcState
 
 -- | Merge the other given compactor into this one. They both must have the
 -- same @lgWeight@
 merge
   :: (PrimMonad m, s ~ PrimState m)
-  => ReqCompactor lgWeight (PrimState m) 
+  => ReqCompactor (PrimState m) 
   -- ^ The compactor to merge into
-  -> ReqCompactor lgWeight (PrimState m)
+  -> ReqCompactor (PrimState m)
   -- ^ The compactor to merge from 
-  -> m (ReqCompactor lgWeight s)
+  -> m (ReqCompactor s)
 merge this otherCompactor = do
   ensureMaxSections
   buff <- getBuffer this
@@ -179,7 +181,7 @@ merge this otherCompactor = do
 -- | Adjust the sectionSize and numSections if possible.
 ensureEnoughSections 
   :: PrimMonad m 
-  => ReqCompactor k (PrimState m) 
+  => ReqCompactor (PrimState m) 
   -> m Bool
   -- ^ 'True' if the SectionSize and NumSections were adjusted.
 ensureEnoughSections compactor = do
@@ -202,7 +204,7 @@ ensureEnoughSections compactor = do
 -- | Computes the start and end indices of the compacted region
 computeCompactionRange 
   :: PrimMonad m 
-  => ReqCompactor k (PrimState m) 
+  => ReqCompactor (PrimState m) 
   -> Int 
   -- ^ secsToCompact the number of contiguous sections to compact
   -> m Word64
