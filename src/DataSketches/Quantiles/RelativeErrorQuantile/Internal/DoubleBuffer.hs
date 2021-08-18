@@ -1,4 +1,4 @@
-module DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
+module DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
   ( DoubleBuffer
   , Capacity
   , GrowthIncrement
@@ -30,12 +30,13 @@ import Control.Monad.Reader.Class
 import Data.Primitive.MutVar
 import qualified Data.Vector.Unboxed as UVector
 import qualified Data.Vector.Unboxed.Mutable as MUVector
-import DataSketches.Quantiles.RelativeErrorQuantile.URef
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 import Data.Vector.Algorithms.Intro (sortByBounds)
 import Data.Vector.Algorithms.Search
 import GHC.Stack
 import System.IO.Unsafe
 
+-- | A special buffer of floats specifically designed to support the ReqCompactor class.
 data DoubleBuffer s = DoubleBuffer
   { vec :: !(MutVar s (MUVector.MVector s Double))
   , count :: !(URef s Int)
@@ -207,6 +208,7 @@ isEmpty buf = (== 0) <$> getCount buf
 isSorted :: PrimMonad m => DoubleBuffer (PrimState m) -> m Bool
 isSorted = readURef . sorted
 
+-- | Sorts the active region
 sort :: PrimMonad m => DoubleBuffer (PrimState m) -> m ()
 sort buf@DoubleBuffer{..} = do
   sorted_ <- isSorted buf
@@ -220,6 +222,7 @@ sort buf@DoubleBuffer{..} = do
     sortByBounds compare vec start end
     writeURef sorted True
 
+-- | Merges the incoming sorted buffer into this sorted buffer.
 mergeSortIn :: (PrimMonad m, HasCallStack) => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m ()
 mergeSortIn this bufIn = do
   sort this

@@ -1,10 +1,10 @@
-cabal-version: 1.12
+cabal-version: 1.18
 
 -- This file has been generated from package.yaml by hpack version 0.34.4.
 --
 -- see: https://github.com/sol/hpack
 
-name:           streaming-quantiles
+name:           data-sketches
 version:        0.1.0.0
 description:    Please see the README on GitHub at <https://github.com/githubuser/streaming-quantiles#readme>
 homepage:       https://github.com/githubuser/streaming-quantiles#readme
@@ -12,12 +12,16 @@ bug-reports:    https://github.com/githubuser/streaming-quantiles/issues
 author:         Author name here
 maintainer:     example@example.com
 copyright:      2021 Author name here
-license:        BSD3
+license:        Apache
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
     README.md
     ChangeLog.md
+extra-doc-files:
+    docs/images/KllErrorK100SL11.png
+    docs/images/ReqErrorHraK12SL11_LT.png
+    docs/images/ReqErrorLraK12SL11_LE.png
 
 source-repository head
   type: git
@@ -26,13 +30,13 @@ source-repository head
 library
   exposed-modules:
       DataSketches.Quantiles.RelativeErrorQuantile
-      DataSketches.Quantiles.RelativeErrorQuantile.Compactor
-      DataSketches.Quantiles.RelativeErrorQuantile.Constants
-      DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
+      DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
+      DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
+      DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
+      DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
       DataSketches.Quantiles.RelativeErrorQuantile.Types
-      DataSketches.Quantiles.RelativeErrorQuantile.URef
   other-modules:
-      Paths_streaming_quantiles
+      Paths_data_sketches
   hs-source-dirs:
       src
   default-extensions:
@@ -47,6 +51,7 @@ library
       TypeOperators
   build-depends:
       base >=4.7 && <5
+    , cereal
     , mtl
     , mwc-random
     , prettyprinter
@@ -62,7 +67,7 @@ test-suite streaming-quantiles-test
       CompactorSpec
       DoubleBufferSpec
       RelativeErrorQuantileSpec
-      Paths_streaming_quantiles
+      Paths_data_sketches
   hs-source-dirs:
       test
   default-extensions:
@@ -78,6 +83,7 @@ test-suite streaming-quantiles-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , cereal
     , hspec
     , hspec-discover
     , mtl

@@ -1,9 +1,32 @@
+-- | The Relative Error Quantile (REQ) sketch provides extremely high accuracy at a chosen end of the rank domain. 
+-- This is best illustrated with some rank domain accuracy plots that compare the KLL quantiles sketch to the REQ sketch.
+--
+-- This first plot illustrates the typical error behavior of the KLL sketch (also the quantiles/DoublesSketch). 
+-- The error is flat for all ranks (0, 1). The green and yellow lines correspond to +/- one RSE at 68% confidence; 
+-- the blue and red lines, +/- two RSE at 95% confidence; and, the purple and brown lines +/- 3 RSE at 99% confidence. 
+-- The reason all the curves pinch at 0 and 1.0, is because the sketch knows with certainty that a request for a quantile at 
+-- rank = 0 is the minimum value of the stream; and a request for a quantiles at rank = 1.0, is the maximum value of the stream. 
+-- Both of which the sketch tracks.
+--
+-- ![KLL Gaussian Error Quantiles](docs/images/KllErrorK100SL11.png)
+--
+-- The next plot is the exact same data and queries fed to the REQ sketch set for High Rank Accuracy (HRA) mode. 
+-- In this plot, starting at a rank of about 0.3, the contour lines start converging and actually reach zero error at 
+-- rank 1.0. Therefore the error (the inverse of accuracy) is relative to the requested rank, thus the name of the sketch. 
+-- This means that the user can perform getQuantile(rank) queries, where rank = .99999 and get accurate results.
+--
+-- ![ReqSketch Gaussian Error Quantiles - HighRankAccuracy](docs/images/ReqErrorHraK12SL11_LT.png)
+--
+-- This next plot is also the same data and queries, except the REQ sketch was configured for Low Rank Accuracy (LRA). In this case the user can perform getQuantiles(rank) queries, where rank = .00001 and get accurate results.
+--
+-- ![ReqSketch Gaussian Error Quantiles - LowRankAccuracy](docs/images/ReqErrorLraK12SL11_LE.png)
+
 {-# LANGUAGE ConstraintKinds #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
   ( ReqSketch
   , ValidK
   , mkReqSketch
-  , cumulativeDistributionFunction  
+  , cumulativeDistributionFunction
   , RankAccuracy(..)
   , rankAccuracy
   , relativeStandardError
@@ -33,12 +56,12 @@ import qualified Data.Vector as Vector
 import Data.Primitive.MutVar
 import Data.Word
 import Data.Foldable (for_)
-import DataSketches.Quantiles.RelativeErrorQuantile.Constants
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import DataSketches.Quantiles.RelativeErrorQuantile.Compactor (ReqCompactor)
-import qualified DataSketches.Quantiles.RelativeErrorQuantile.Compactor as Compactor
-import qualified DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer as DoubleBuffer
-import DataSketches.Quantiles.RelativeErrorQuantile.URef
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor (ReqCompactor)
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor as Compactor
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 import GHC.TypeLits
 import Prelude hiding (null, minimum, maximum)
 
@@ -74,24 +97,24 @@ instance TakeSnapshot (ReqSketch k) where
     <*> readURef maxNominalCapacitiesSize
     <*> (readMutVar compactors >>= mapM takeSnapshot)
 
-deriving instance Show (Snapshot (ReqSketch k))    
+deriving instance Show (Snapshot (ReqSketch k))
 
 type ValidK k = (4 <= k, k <= 1024, (k `Mod` 2) ~ 0)
 
 mkReqSketch :: forall k m. (PrimMonad m, ValidK k) => RankAccuracy -> m (ReqSketch k (PrimState m))
 mkReqSketch rank = do
-  r <- ReqSketch rank (:<) 
+  r <- ReqSketch rank (:<)
     <$> newURef 0
     <*> newURef (0 / 0)
     <*> newURef (0 / 0)
     <*> newURef 0
     <*> newURef 0
     <*> newMutVar Nothing
-    <*> (newMutVar Vector.empty)
+    <*> newMutVar Vector.empty
   grow r
   pure r
 
-  
+
 
 getCompactors :: PrimMonad m => ReqSketch k (PrimState m) -> m (Vector.Vector (ReqCompactor k (PrimState m)))
 getCompactors = readMutVar . compactors
@@ -147,30 +170,56 @@ getPMForCDF this splits = do
   n <- getN this
   pure $ (++ [n]) $ take numBuckets $ splitCounts
 
-cumulativeDistributionFunction :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m (Maybe [Double])
+-- | Returns an approximation to the Cumulative Distribution Function (CDF), which is the cumulative analog of the PMF, 
+-- of the input stream given a set of splitPoint (values).
+cumulativeDistributionFunction 
+  :: (PrimMonad m, KnownNat k) 
+  => ReqSketch k (PrimState m) 
+  -> [Double] 
+  -- ^ Returns an approximation to the Cumulative Distribution Function (CDF), 
+  -- which is the cumulative analog of the PMF, of the input stream given a set of 
+  -- splitPoint (values).
+  --
+  -- The resulting approximations have a probabilistic guarantee that be obtained, 
+  -- a priori, from the getRSE(int, double, boolean, long) function.
+  --
+  -- If the sketch is empty this returns 'Nothing'.
+  -> m (Maybe [Double])
 cumulativeDistributionFunction this splitPoints = do
   isEmpty <- getIsEmpty this
-  if (not isEmpty)
-    then do
+  if isEmpty
+    then pure Nothing
+    else do
       let numBuckets = length splitPoints + 1
       buckets <- getPMForCDF this splitPoints
       n <- getN this
       pure $ Just $ (/ fromIntegral n) . fromIntegral <$> buckets
-    else pure Nothing
 
 rankAccuracy :: ReqSketch s k -> RankAccuracy
 rankAccuracy = rankAccuracySetting
 
-relativeStandardError :: ReqSketch s k -> Int -> Double -> RankAccuracy -> Int -> Double
-relativeStandardError = undefined 
+-- | Returns an a priori estimate of relative standard error (RSE, expressed as a number in [0,1]). Derived from Lemma 12 in https://arxiv.org/abs/2004.01668v2, but the constant factors were modified based on empirical measurements.
+relativeStandardError
+  :: ReqSketch s k
+  -> Int
+  -- ^ k - the given value of k
+  -> Double
+  -- ^ rank - the given normalized rank, a number in [0,1].
+  -> RankAccuracy
+  -> Int
+  -- ^ totalN - an estimate of the total number of items submitted to the sketch.
+  -> Double
+  -- ^ an a priori estimate of relative standard error (RSE, expressed as a number in [0,1]).
+relativeStandardError = undefined
 
+-- | Gets the smallest value seen by this sketch
 minimum :: PrimMonad m => ReqSketch k (PrimState m) -> m Double
 minimum = readURef . minValue
 
+-- | Gets the largest value seen by this sketch
 maximum :: PrimMonad m => ReqSketch k (PrimState m) -> m Double
 maximum = readURef . maxValue
 
--- not public
 count :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> Double -> m Word64
 count s value = fromIntegral <$> do
   empty <- null s
@@ -185,16 +234,51 @@ count s value = fromIntegral <$> do
             pure (accum + (fromIntegral count_ * wt))
       Vector.foldM go 0 compactors
 
-probabilityMassFunction :: ReqSketch k s -> [Double] -> [Double]
+-- | Returns an approximation to the Probability Mass Function (PMF) of the input stream given a set of splitPoints (values).
+-- The resulting approximations have a probabilistic guarantee that be obtained, a priori, from the getRSE(int, double, boolean, long) function.
+--
+-- If the sketch is empty this returns an empty list.
+probabilityMassFunction
+  :: ReqSketch k s
+  -> [Double]
+  -- ^ splitPoints - an array of m unique, monotonically increasing double values that divide 
+  -- the real number line into m+1 consecutive disjoint intervals. The definition of an "interval" 
+  -- is inclusive of the left splitPoint (or minimum value) and exclusive of the right splitPoint, 
+  -- with the exception that the last interval will include the maximum value. It is not necessary 
+  -- to include either the min or max values in these splitpoints.
+  -> [Double]
+  -- ^ An array of m+1 doubles each of which is an approximation to the fraction of 
+  -- the input stream values (the mass) that fall into one of those intervals. 
+  -- The definition of an "interval" is inclusive of the left splitPoint and exclusive 
+  -- of the right splitPoint, with the exception that the last interval will 
+  -- include maximum value.
 probabilityMassFunction  = undefined
 
-quantile :: ReqSketch k s -> Double -> Double
+-- | Gets the approximate quantile of the given normalized rank based on the lteq criterion.
+quantile
+  :: ReqSketch k s
+  -> Double
+  -- ^ normRank - the given normalized rank
+  -> Double
+  -- ^ the approximate quantile given the normalized rank.
 quantile = undefined
 
-quantiles :: ReqSketch k s -> [Double] -> Double
+-- | Gets an array of quantiles that correspond to the given array of normalized ranks.
+quantiles
+  :: ReqSketch k s
+  -> [Double]
+  -- ^ normRanks - the given array of normalized ranks.
+  -> Double
+  -- ^ the array of quantiles that correspond to the given array of normalized ranks.
 quantiles = undefined
 
-rank :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> Double -> m Double 
+-- | Computes the normalized rank of the given value in the stream. The normalized rank is the fraction of values less than the given value; or if lteq is true, the fraction of values less than or equal to the given value.
+rank :: (PrimMonad m, s ~ PrimState m, KnownNat k)
+  => ReqSketch k s
+  -> Double
+  -- ^ value - the given value
+  -> m Double
+  -- ^ the normalized rank of the given value in the stream.
 rank s value = do
   isEmpty <- null s
   if isEmpty
@@ -204,11 +288,18 @@ rank s value = do
       total <- readURef $ totalN s
       pure (fromIntegral nnCount / fromIntegral total)
 
-
-
-rankLowerBound :: ReqSketch s k -> Double -> Int -> Double
+-- | Returns an approximate lower bound rank of the given normalized rank.
+rankLowerBound
+  :: ReqSketch s k
+  -> Double
+  -- ^ rank - the given rank, a value between 0 and 1.0.
+  -> Int
+  -- ^ numStdDev - the number of standard deviations. Must be 1, 2, or 3.
+  -> Double
+  -- ^ an approximate lower bound rank.
 rankLowerBound s rank numStdDev = undefined
 
+-- | Gets an array of normalized ranks that correspond to the given array of values.
 ranks :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> [Double] -> m [Double]
 ranks s values = do
   isEmpty <- null s
@@ -217,17 +308,26 @@ ranks s values = do
     else do
       error "TODO"
 
-
-rankUpperBound :: ReqSketch s k -> Double -> Int -> Double
+-- | Returns an approximate upper bound rank of the given rank.
+rankUpperBound
+  :: ReqSketch s k
+  -> Double
+  -- ^ rank - the given rank, a value between 0 and 1.0.
+  -> Int
+  -- ^ numStdDev - the number of standard deviations. Must be 1, 2, or 3.
+  -> Double
+  -- ^ an approximate upper bound rank.
 rankUpperBound = undefined
 
--- | Renamed from isEmpty
+-- | Returns true if this sketch is empty.
 null :: (PrimMonad m) => ReqSketch k (PrimState m) -> m Bool
 null = fmap (== 0) . readURef . totalN
 
+-- | Returns true if this sketch is in estimation mode.
 isEstimationMode :: PrimMonad m => ReqSketch k (PrimState m) -> m Bool
 isEstimationMode = fmap (> 1) . getNumLevels
 
+-- | Returns the current comparison criterion.
 isLessThanOrEqual :: ReqSketch s k -> Bool
 isLessThanOrEqual s = case criterion s of
   (:<) -> False
@@ -279,14 +379,15 @@ compress this = do
       modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
   writeMutVar (aux this) Nothing
 
-merge 
+-- | Merge other sketch into this one.
+merge
   :: (PrimMonad m, s ~ PrimState m)
   => ReqSketch k s
   -> ReqSketch k s
   -> m (ReqSketch k s)
 merge this other = do
   otherIsEmpty <- getIsEmpty other
-  when (not otherIsEmpty) $ do
+  unless otherIsEmpty $ do
     let rankAccuracy = rankAccuracySetting this
         otherRankAccuracy = rankAccuracySetting other
     when (rankAccuracy /= otherRankAccuracy) $
@@ -328,11 +429,10 @@ merge this other = do
       when (numCompactors < target) $
         grow this
 
--- TODO reset?
-
+-- | Updates this sketch with the given item.
 update :: (PrimMonad m) => ReqSketch k (PrimState m) -> Double -> m ()
 update this item = do
-  when (not $ isNaN item) $ do
+  unless (isNaN item) $ do
     isEmpty <- getIsEmpty this
     if isEmpty
        then do
@@ -375,11 +475,9 @@ getRankUB k levels rank numStdDev hra totalN = if exactRank k levels rank hra to
     fixed = fixRseFactor / fromIntegral k
     lbRel = rank + fromIntegral numStdDev * relative
     lbFix = rank + fromIntegral numStdDev * fixed
-  
+
 exactRank :: Int -> Int -> Double -> Bool -> Word64 -> Bool
-exactRank k levels rank hra totalN = if levels == 1 || fromIntegral totalN <= baseCap
-  then True
-  else hra && rank >= 1.0 - exactRankThresh || not hra && rank <= exactRankThresh
+exactRank k levels rank hra totalN = (levels == 1 || fromIntegral totalN <= baseCap) || (hra && rank >= 1.0 - exactRankThresh || not hra && rank <= exactRankThresh)
   where
     baseCap = k * initNumberOfSections
     exactRankThresh :: Double

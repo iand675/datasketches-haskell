@@ -1,4 +1,4 @@
-module DataSketches.Quantiles.RelativeErrorQuantile.Compactor
+module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
   ( ReqCompactor
   , CompactorReturn (..)
   , compact
@@ -22,9 +22,9 @@ import System.Random.MWC (create, Variate(uniform))
 import Control.Monad (when)
 import Control.Monad.Trans
 import Control.Monad.Primitive
-import DataSketches.Quantiles.RelativeErrorQuantile.Constants
-import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
-import DataSketches.Quantiles.RelativeErrorQuantile.URef
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 
 
 data CompactorReturn s = CompactorReturn
@@ -33,7 +33,7 @@ data CompactorReturn s = CompactorReturn
   , crDoubleBuffer :: !(DoubleBuffer s)
   }
 
-data ReqCompactor (lgWeight :: Nat) s = ReqCompactor 
+data ReqCompactor (lgWeight :: Nat) s = ReqCompactor
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
   -- State
@@ -48,7 +48,7 @@ data ReqCompactor (lgWeight :: Nat) s = ReqCompactor
 instance TakeSnapshot (ReqCompactor k) where
   data Snapshot (ReqCompactor k) = ReqCompactorSnapshot
     { snapshotCompactorRankAccuracy :: !RankAccuracy
-    , snapshotCompactorRankAccuracyState :: !Word64 
+    , snapshotCompactorRankAccuracyState :: !Word64
     , snapshotCompactorLastFlip :: !Bool
     , snapshotCompactorSectionSizeFlt :: !Double
     , snapshotCompactorSectionSize :: !Word32
@@ -69,7 +69,7 @@ nomCapMult :: Num a => a
 nomCapMult = 2
 
 toInt :: Integral a => a -> Int
-toInt = fromIntegral 
+toInt = fromIntegral
 
 compact :: (PrimMonad m) => ReqCompactor k (PrimState m) -> m (CompactorReturn (PrimState m))
 compact this = do
@@ -85,7 +85,7 @@ compact this = do
       compactionEnd = fromIntegral $ compactionRange `shiftR` 32 -- high 32
   when (compactionEnd - compactionStart >= 2) $
     error "invariant violated: compaction range too large"
-  coin <- if (state .&. 1 == 1)
+  coin <- if state .&. 1 == 1
      then readURef $ rcLastFlip this
      else flipCoin
   writeURef (rcLastFlip this) coin
@@ -119,7 +119,7 @@ getNominalCapacity :: PrimMonad m => ReqCompactor k (PrimState m) -> m Int
 getNominalCapacity compactor = do
   numSections <- readURef $ rcNumSections compactor
   sectionSize <- readURef $ rcSectionSize compactor
-  pure $ nomCapMult * (toInt numSections) * (toInt sectionSize)
+  pure $ nomCapMult * toInt numSections * toInt sectionSize
 
 getNumSections :: PrimMonad m => ReqCompactor k (PrimState m) -> m Word8
 getNumSections = readURef . rcNumSections
@@ -130,10 +130,14 @@ getSectionSizeFlt = readURef . rcSectionSizeFlt
 getState :: PrimMonad m => ReqCompactor k (PrimState m) -> m Word64
 getState = readURef . rcState
 
-merge 
+-- | Merge the other given compactor into this one. They both must have the
+-- same @lgWeight@
+merge
   :: (PrimMonad m, s ~ PrimState m)
   => ReqCompactor lgWeight (PrimState m) 
-  -> ReqCompactor lgWeight (PrimState m) 
+  -- ^ The compactor to merge into
+  -> ReqCompactor lgWeight (PrimState m)
+  -- ^ The compactor to merge from 
   -> m (ReqCompactor lgWeight s)
 merge this otherCompactor = do
   ensureMaxSections
@@ -155,7 +159,12 @@ merge this otherCompactor = do
       -- loop until no adjustments can be made
       when adjusted ensureMaxSections
 
-ensureEnoughSections :: PrimMonad m => ReqCompactor k (PrimState m) -> m Bool
+-- | Adjust the sectionSize and numSections if possible.
+ensureEnoughSections 
+  :: PrimMonad m 
+  => ReqCompactor k (PrimState m) 
+  -> m Bool
+  -- ^ 'True' if the SectionSize and NumSections were adjusted.
 ensureEnoughSections compactor = do
   sectionSizeFlt <- readURef $ rcSectionSizeFlt compactor
   let szf = sectionSizeFlt / sqrt2
@@ -163,7 +172,7 @@ ensureEnoughSections compactor = do
   state <- readURef $ rcState compactor
   numSections <- readURef $ rcNumSections compactor
   sectionSize <- readURef $ rcSectionSize compactor
-  if (state >= (1 `shiftL` (toInt $ numSections - 1)))
+  if state >= (1 `shiftL` toInt (numSections - 1))
      && sectionSize > minK
      && ne >= minK
      then do
@@ -173,7 +182,14 @@ ensureEnoughSections compactor = do
        pure True
      else pure False
 
-computeCompactionRange :: PrimMonad m => ReqCompactor k (PrimState m) -> Int -> m Word64
+-- | Computes the start and end indices of the compacted region
+computeCompactionRange 
+  :: PrimMonad m 
+  => ReqCompactor k (PrimState m) 
+  -> Int 
+  -- ^ secsToCompact the number of contiguous sections to compact
+  -> m Word64
+-- ^ the start and end indices of the compacted region in compact form
 computeCompactionRange this secsToCompact = do
   buffSize <- getCount =<< getBuffer this
   nominalCapacity <- getNominalCapacity this
@@ -186,6 +202,10 @@ computeCompactionRange this secsToCompact = do
             HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact)
             LowRanksAreAccurate -> (fromIntegral nonCompact, fromIntegral buffSize)
   pure $ low + (high `shiftL` 32)
-
-nearestEven :: Double -> Int
+-- | Returns the nearest even integer to the given value. Also used by test.
+nearestEven 
+  :: Double 
+  -- ^ the given value
+  -> Int
+  -- ^ the nearest even integer to the given value.
 nearestEven x = round (x / 2) `shiftL` 1

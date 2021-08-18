@@ -1,4 +1,4 @@
-module DataSketches.Quantiles.RelativeErrorQuantile.Constants where
+module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants where
 -- Constants
 import Data.Word
 

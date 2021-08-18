@@ -1,4 +1,4 @@
-module DataSketches.Quantiles.RelativeErrorQuantile.URef where
+module DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef where
 
 import Control.Monad.Primitive
 import qualified Data.Vector.Unboxed.Mutable as MUVector

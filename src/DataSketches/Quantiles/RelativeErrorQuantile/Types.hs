@@ -4,7 +4,11 @@ import Control.Monad.Primitive
 data Criterion = (:<) | (:<=)
   deriving (Show, Eq)
 
-data RankAccuracy = HighRanksAreAccurate | LowRanksAreAccurate
+data RankAccuracy 
+  = HighRanksAreAccurate 
+  -- ^ High ranks are prioritized for better accuracy.
+  | LowRanksAreAccurate
+  -- ^ Low ranks are prioritized for better accuracy
   deriving (Show, Eq)
 
 class TakeSnapshot a where

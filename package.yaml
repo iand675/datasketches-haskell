@@ -1,7 +1,7 @@
-name:                streaming-quantiles
+name:                data-sketches
 version:             0.1.0.0
 github:              "githubuser/streaming-quantiles"
-license:             BSD3
+license:             Apache
 author:              "Author name here"
 maintainer:          "example@example.com"
 copyright:           "2021 Author name here"
@@ -21,6 +21,11 @@ extra-source-files:
 - README.md
 - ChangeLog.md
 
+extra-doc-files:
+- docs/images/KllErrorK100SL11.png
+- docs/images/ReqErrorHraK12SL11_LT.png
+- docs/images/ReqErrorLraK12SL11_LE.png
+
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
 # category:            Web
@@ -38,6 +43,7 @@ dependencies:
 - primitive
 - vector-algorithms
 - prettyprinter
+- cereal
 
 library:
   source-dirs: src
