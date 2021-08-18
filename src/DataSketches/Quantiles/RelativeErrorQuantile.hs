@@ -61,6 +61,8 @@ import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor (ReqCompactor)
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary (ReqAuxiliary)
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary as Auxiliary
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor as Compactor
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
@@ -75,7 +77,7 @@ data ReqSketch k s = ReqSketch
   , maxValue :: !(URef s Double )
   , retainedItems :: !(URef s Int)
   , maxNominalCapacitiesSize :: !(URef s Int)
-  , aux :: !(MutVar s (Maybe ()))
+  , aux :: !(MutVar s (Maybe (ReqAuxiliary s)))
   , compactors :: !(MutVar s (Vector.Vector (ReqCompactor k s)))
   }
 
@@ -116,7 +118,8 @@ mkReqSketch rank = do
   grow r
   pure r
 
-
+getAux :: PrimMonad m => ReqSketch k (PrimState m) -> m (Maybe (ReqAuxiliary (PrimState m)))
+getAux = readMutVar . aux
 
 getCompactors :: PrimMonad m => ReqSketch k (PrimState m) -> m (Vector.Vector (ReqCompactor k (PrimState m)))
 getCompactors = readMutVar . compactors
@@ -241,38 +244,74 @@ count s value = fromIntegral <$> do
 --
 -- If the sketch is empty this returns an empty list.
 probabilityMassFunction
-  :: ReqSketch k s
+  :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
   -> [Double]
   -- ^ splitPoints - an array of m unique, monotonically increasing double values that divide 
   -- the real number line into m+1 consecutive disjoint intervals. The definition of an "interval" 
   -- is inclusive of the left splitPoint (or minimum value) and exclusive of the right splitPoint, 
   -- with the exception that the last interval will include the maximum value. It is not necessary 
   -- to include either the min or max values in these splitpoints.
-  -> [Double]
+  -> m [Double]
   -- ^ An array of m+1 doubles each of which is an approximation to the fraction of 
   -- the input stream values (the mass) that fall into one of those intervals. 
   -- The definition of an "interval" is inclusive of the left splitPoint and exclusive 
   -- of the right splitPoint, with the exception that the last interval will 
   -- include maximum value.
-probabilityMassFunction  = undefined
+probabilityMassFunction this splitPoints = do
+  isEmpty <- getIsEmpty this
+  if isEmpty
+     then pure []
+     else do
+       let numBuckets = length splitPoints + 1
+       buckets <- fmap fromIntegral <$> getPMForCDF this splitPoints
+       total <- fromIntegral <$> getN this
+       let computeProb (0, bucket) = bucket / total
+           computeProb (i, bucket) = (prevBucket + bucket) / total
+             where prevBucket = buckets !! i - 1
+           probs = computeProb <$> (zip [0..] buckets)
+       pure probs
 
 -- | Gets the approximate quantile of the given normalized rank based on the lteq criterion.
-quantile
-  :: ReqSketch k s
+quantile 
+  :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
   -> Double
   -- ^ normRank - the given normalized rank
-  -> Double
+  -> m Double
   -- ^ the approximate quantile given the normalized rank.
-quantile = undefined
+quantile this normRank = do
+  isEmpty <- getIsEmpty this
+  if isEmpty
+     then pure (0/0)
+     else do
+       when (normRank < 0 || normRank > 1.0) $
+         error $ "Normalized rank must be in the range [0.0, 1.0]: " ++ show normRank
+       currAuxiliary <- getAux this
+       when (currAuxiliary == Nothing) $ do
+         total <- getN this
+         retainedItems <- getRetainedItems this
+         compactors <- getCompactors this
+         newAuxiliary <- Auxiliary.mkAuxiliary (rankAccuracySetting this) total retainedItems compactors
+         writeMutVar (aux this) (Just newAuxiliary)
+       mAuxiliary <- getAux this
+       case mAuxiliary of
+         Just auxiliary -> Auxiliary.getQuantile auxiliary normRank $ isLessThanOrEqual this
+         Nothing -> error "invariant violated: aux is not set"
 
 -- | Gets an array of quantiles that correspond to the given array of normalized ranks.
 quantiles
-  :: ReqSketch k s
+  :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
   -> [Double]
   -- ^ normRanks - the given array of normalized ranks.
-  -> Double
+  -> m [Double]
   -- ^ the array of quantiles that correspond to the given array of normalized ranks.
-quantiles = undefined
+quantiles this normRanks = do
+  isEmpty <- getIsEmpty this
+  if isEmpty
+     then pure []
+     else mapM (quantile this) normRanks
 
 -- | Computes the normalized rank of the given value in the stream. The normalized rank is the fraction of values less than the given value; or if lteq is true, the fraction of values less than or equal to the given value.
 rank :: (PrimMonad m, s ~ PrimState m, KnownNat k)

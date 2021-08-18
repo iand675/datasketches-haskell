@@ -30,6 +30,7 @@ source-repository head
 library
   exposed-modules:
       DataSketches.Quantiles.RelativeErrorQuantile
+      DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
