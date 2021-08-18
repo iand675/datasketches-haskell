@@ -26,6 +26,9 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   ( ReqSketch
   , ValidK
   , mkReqSketch
+  , getCompactors
+  , getNumLevels
+  , getRetainedItems
   , cumulativeDistributionFunction
   , RankAccuracy(..)
   , rankAccuracy
@@ -55,7 +58,6 @@ import Data.Vector ((!))
 import qualified Data.Vector as Vector
 import Data.Primitive.MutVar
 import Data.Word
-import Data.Foldable (for_)
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor (ReqCompactor)
@@ -363,7 +365,7 @@ grow this = do
 compress :: (PrimMonad m) => ReqSketch k (PrimState m) -> m ()
 compress this = do
   compactors <- getCompactors this
-  for_ (Vector.indexed compactors) $ \(height, compactor) -> do
+  Vector.iforM_ compactors $ \height compactor -> do
     buff <- Compactor.getBuffer compactor
     buffSize <- DoubleBuffer.getCount buff
     nominalCapacity <- Compactor.getNominalCapacity compactor
