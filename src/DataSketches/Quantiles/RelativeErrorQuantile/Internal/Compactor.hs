@@ -20,6 +20,7 @@ import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import System.Random.MWC (create, Variate(uniform))
+import Control.Exception (assert)
 import Control.Monad (when)
 import Control.Monad.Trans
 import Control.Monad.Primitive
@@ -158,7 +159,7 @@ merge
   -> ReqCompactor (PrimState m)
   -- ^ The compactor to merge from 
   -> m (ReqCompactor s)
-merge this otherCompactor = do
+merge this otherCompactor = assert (rcLgWeight this == rcLgWeight otherCompactor) $ do
   ensureMaxSections
   buff <- getBuffer this
   otherBuff <- getBuffer otherCompactor
