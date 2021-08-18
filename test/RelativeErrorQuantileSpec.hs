@@ -11,6 +11,57 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  specify "non finite PMF/CDF should throw" $ do
+    rs <- mkReqSketch @6 HighRanksAreAccurate
+    update sk 1
+    getCDF sk [0 / 0] `shouldThrow` anyException
+  specify "updating a sketch with NaN should ignore it" $ do
+    rs <- mkReqSketch @6 HighRanksAreAccurate
+    update sk (0 / 0)
+    isEmpty <- null rs
+    isEmpty `shouldBe` True
+  specify "non finite rank should throw" $ do
+    let infinity = (read "Infinity")::Double
+    rs <- mkReqSketch @6 HighRanksAreAccurate
+    update sk 1
+    rank sk infinity `shouldThrow` anyException
+  specify "big merge doesn't explode" $ do
+    sk1 <- mkReqSketch @6 HighRanksAreAccurate
+    mapM_ (update sk1) [5..10]
+    sk2 <- mkReqSketch @6 HighRanksAreAccurate
+    merge sk1 sk2
+    mapM_ (update sk2) [1..15]
+    merge sk1 sk2
+    n <- getN sk1
+    n `shouldBe` 20
+    mapM_ (update sk2) [16..300]
+    merge sk1 sk2
+  specify "simple test" $ do
+    sk <- mkReqSketch @20 HighRanksAreAccurate
+    let vs = [5, 5, 5, 6, 6, 6, 7, 8, 8, 8]
+    let lessThanRs = [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.6, 0.7, 0.7, 0.7]
+    mapM_ (update sk) 
+    do
+      actualRanks <- ranks vs
+      actualRanks `shouldBe` lessThanRs
+    do
+      actualRanks <- mapM rank vs
+      actualRanks `shouldBe` lessThanRs
+    let sk' = sk { criterion = (:<=) }
+    let lessThanEqRs = [0.3, 0.3, 0.3, 0.6, 0.6, 0.6, 0.7, 1.0, 1.0, 1.0]
+    do
+      actualRanks <- ranks vs'
+      actualRanks `shouldBe` lessThanEqRs
+    do
+      actualRanks <- mapM rank vs'
+      actualRanks `shouldBe` lessThanEqRs
+
+
+
+
+
+
+
   --      k     min max hra                  lteq  low-to-high or high-to-low
   bigTest Proxy 1   200 HighRanksAreAccurate (:<=) True
   bigTest Proxy 1   200 LowRanksAreAccurate  (:<=) True
@@ -94,13 +145,35 @@ checkGetRank sk min_ max_ = do
     (v, initialRank) 
     spArr
 
+checkGetRankConcreteExample :: RankAccuracy -> Criterion -> IO ()
+checkGetRankConcreteExample ra crit = do
+  sk <- loadSketch (Proxy :: Proxy 12) 1 1000 ra crit
+  rLB <- rankLowerBound 0.5 1
+  rLB `shouldSatisfy` (> 0)
+  rLB <- case ra of
+    HighRanksAreAccurate -> rankLowerBound sk (995 / 1000) 1
+    LowRanksAreAccurate -> rankLowerBound sk (5 / 1000) 1
+  rLB `shouldSatisfy` (> 0)
+  rUB <- rankUpperBound 0.5 1
+  rUB `shouldSatisfy` (> 0)
+  rUB <- case ra of
+    HighRanksAreAccurate -> rankUpperBound sk (995 / 1000) 1
+    LowRanksAreAccurate -> rankUpperBound sk (5 / 1000) 1
+  rUB `shouldSatisfy` (> 0)
+  void $ ranks sk [5, 100]
+
+
+
+
+
 checkGetQuantiles 
   :: KnownNat n 
   => ReqSketch n (PrimState IO) 
   -> IO ()
 checkGetQuantiles sk = do
   let rArr = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-  -- nothing getting checked here apparently
+  -- nothing getting checked here apparently, guess the thing not
+  -- exploding is sufficient.
   qOut <- quantiles sk rArr
   pure ()
 
