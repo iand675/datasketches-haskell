@@ -1,5 +1,6 @@
 module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
   ( ReqCompactor
+  , mkReqCompactor
   , CompactorReturn (..)
   , compact
   , getBuffer
@@ -64,6 +65,22 @@ instance TakeSnapshot (ReqCompactor k) where
     <*> (readMutVar rcBuffer >>= takeSnapshot)
 
 deriving instance Show (Snapshot (ReqCompactor k))
+
+mkReqCompactor
+  :: (KnownNat k, PrimMonad m)
+  => RankAccuracy
+  -> Word32
+  -> m (ReqCompactor k (PrimState m))
+mkReqCompactor rankAccuracy sectionSize = do
+  let nominalCapacity = fromIntegral $ nomCapMulti * initNumberOfSections * sectionSize
+  buff <- mkBuffer (nominalCapacity * 2) nominalCapacity (rankAccuracy == HighRanksAreAccurate)
+  ReqCompactor rankAccuracy
+    <$> newURef 0
+    <*> newURef False
+    <*> newURef (fromIntegral sectionSize)
+    <*> newURef sectionSize
+    <*> newURef initNumberOfSections
+    <*> newMutVar buff
 
 nomCapMult :: Num a => a
 nomCapMult = 2
