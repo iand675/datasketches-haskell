@@ -33,7 +33,7 @@ mkAuxiliary rankAccuracy totalN retainedItems compactors = do
         , raHighRankAccuracy = rankAccuracy == HighRanksAreAccurate
         , raSize = totalN
         }
-  Vector.foldM (mergeBuffers this) 0 compactors
+  Vector.foldM_ (mergeBuffers this) 0 compactors
   createCumulativeWeights this
   dedup this
   pure this
@@ -57,12 +57,11 @@ getQuantile this normalRank ltEq = do
   items <- getItems this
   weights <- getWeights this
   let weightsSize = MUVector.length weights
-      rank = normalRank * (fromIntegral $ raSize this)
+      rank = normalRank * fromIntegral (raSize this)
       comparator = if ltEq then (>= rank) else (> rank)
       pred = comparator . fromIntegral
   ix <- binarySearchPBounds pred weights 0 (weightsSize - 1)
-  item <- MUVector.read items ix
-  pure item
+  MUVector.read items ix
 
 createCumulativeWeights :: PrimMonad m => ReqAuxiliary (PrimState m) -> m ()
 createCumulativeWeights this = do
@@ -101,7 +100,7 @@ dedup this = do
                          then countDups (j + 1) (hidup + 1)
                          else pure (j, hidup)
                 (j', hidup') <- countDups j hidup
-                if (j' - i == 1) -- no dups
+                if j' - i == 1 -- no dups
                    then do
                      item <- MUVector.read items i
                      weight <- MUVector.read weights i
@@ -115,7 +114,7 @@ dedup this = do
                      MUVector.write weightsB bi weight
                      go j' (bi + 1)
 
-mergeSortIn :: PrimMonad m => ReqAuxiliary (PrimState m) -> (DoubleBuffer (PrimState m)) -> Word64 -> Int -> m ()
+mergeSortIn :: PrimMonad m => ReqAuxiliary (PrimState m) -> DoubleBuffer (PrimState m) -> Word64 -> Int -> m ()
 mergeSortIn this otherBuff defaultWeight auxCount = do
   DoubleBuffer.sort otherBuff
   items <- getItems this
@@ -124,7 +123,7 @@ mergeSortIn this otherBuff defaultWeight auxCount = do
   otherBuffSize <- DoubleBuffer.getCount otherBuff
   otherBuffCapacity <- DoubleBuffer.getCapacity otherBuff
   let totalSize = otherBuffSize + auxCount
-      height = if (raHighRankAccuracy this)
+      height = if raHighRankAccuracy this
                   then otherBuffCapacity - 1
                   else otherBuffSize - 1
   merge items weights otherItems (auxCount - 1) (otherBuffSize - 1) height totalSize
@@ -137,7 +136,7 @@ mergeSortIn this otherBuff defaultWeight auxCount = do
             item <- MUVector.read items i
             weight <- MUVector.read weights i
             otherItem <- MUVector.read otherItems h
-            if (item >= otherItem)
+            if item >= otherItem
                then do
                  MUVector.write items k item
                  MUVector.write weights k weight
