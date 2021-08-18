@@ -1,10 +1,10 @@
 name:                data-sketches
 version:             0.1.0.0
-github:              "githubuser/streaming-quantiles"
+github:              "iand675/data-sketches"
 license:             Apache
-author:              "Author name here"
-maintainer:          "example@example.com"
-copyright:           "2021 Author name here"
+author:              "Ian Duncan, Rob Bassi"
+maintainer:          "ian@iankduncan.com"
+copyright:           "2021 Ian Duncan, Rob Bassi, Mercury Bank"
 
 default-extensions:
 - BangPatterns
@@ -33,7 +33,7 @@ extra-doc-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/githubuser/streaming-quantiles#readme>
+description:         Please see the README on GitHub at <https://github.com/iand675/streaming-quantiles#readme>
 
 dependencies:
 - base >= 4.7 && < 5
@@ -49,7 +49,7 @@ library:
   source-dirs: src
 
 tests:
-  streaming-quantiles-test:
+  data-sketches-test:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
@@ -57,6 +57,18 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - streaming-quantiles
+    - data-sketches
     - hspec
     - hspec-discover
+
+benchmarks:
+  bench:
+    main: Bench.hs
+    source-dirs: bench
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - criterion
+    - data-sketches

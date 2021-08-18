@@ -6,12 +6,12 @@ cabal-version: 1.18
 
 name:           data-sketches
 version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/githubuser/streaming-quantiles#readme>
-homepage:       https://github.com/githubuser/streaming-quantiles#readme
-bug-reports:    https://github.com/githubuser/streaming-quantiles/issues
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2021 Author name here
+description:    Please see the README on GitHub at <https://github.com/iand675/streaming-quantiles#readme>
+homepage:       https://github.com/iand675/data-sketches#readme
+bug-reports:    https://github.com/iand675/data-sketches/issues
+author:         Ian Duncan, Rob Bassi
+maintainer:     ian@iankduncan.com
+copyright:      2021 Ian Duncan, Rob Bassi, Mercury Bank
 license:        Apache
 license-file:   LICENSE
 build-type:     Simple
@@ -25,7 +25,7 @@ extra-doc-files:
 
 source-repository head
   type: git
-  location: https://github.com/githubuser/streaming-quantiles
+  location: https://github.com/iand675/data-sketches
 
 library
   exposed-modules:
@@ -60,7 +60,7 @@ library
     , vector-algorithms
   default-language: Haskell2010
 
-test-suite streaming-quantiles-test
+test-suite data-sketches-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
@@ -84,13 +84,44 @@ test-suite streaming-quantiles-test
   build-depends:
       base >=4.7 && <5
     , cereal
+    , data-sketches
     , hspec
     , hspec-discover
     , mtl
     , mwc-random
     , prettyprinter
     , primitive
-    , streaming-quantiles
+    , vector
+    , vector-algorithms
+  default-language: Haskell2010
+
+benchmark bench
+  type: exitcode-stdio-1.0
+  main-is: Bench.hs
+  other-modules:
+      Paths_data_sketches
+  hs-source-dirs:
+      bench
+  default-extensions:
+      BangPatterns
+      DataKinds
+      FlexibleInstances
+      KindSignatures
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TypeFamilies
+      TypeOperators
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , cereal
+    , criterion
+    , data-sketches
+    , mtl
+    , mwc-random
+    , prettyprinter
+    , primitive
     , vector
     , vector-algorithms
   default-language: Haskell2010

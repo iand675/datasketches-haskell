@@ -3,14 +3,7 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages:
-- completed:
-    hackage: red-black-tree-0.1.0.0@sha256:62ef8200e8945d21afcc53a015779a27d6578d79d0e2d4dc6e8b3bcf9dabc8d4,1938
-    pantry-tree:
-      size: 1197
-      sha256: 823d5707f336761b4023cb0f1fbab65f5867f70ce584c077e0aeaee40658bfb5
-  original:
-    hackage: red-black-tree-0.1.0.0@sha256:62ef8200e8945d21afcc53a015779a27d6578d79d0e2d4dc6e8b3bcf9dabc8d4,1938
+packages: []
 snapshots:
 - completed:
     size: 585817
