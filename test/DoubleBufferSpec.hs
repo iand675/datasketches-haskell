@@ -1,7 +1,7 @@
 module DoubleBufferSpec where
 
 import Control.Monad
-import DataSketches.Quantiles.RelativeErrorQuantile.DoubleBuffer
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import qualified Data.Vector.Unboxed as UV
 import Test.Hspec

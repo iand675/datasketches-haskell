@@ -1,6 +1,6 @@
 module CompactorSpec where
 
-import DataSketches.Quantiles.RelativeErrorQuantile.Compactor
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
 import Test.Hspec
 
 spec :: Spec
