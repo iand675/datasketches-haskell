@@ -42,11 +42,9 @@ import DataSketches.Quantiles.RelativeErrorQuantile.URef
 import GHC.TypeLits
 import Prelude hiding (null, minimum, maximum)
 
-data ReqSketch s k = ReqSketch
-  { sectionSize :: !Int -- ^ Referred to as k in the paper
-  , rankAccuracySetting :: !RankAccuracy
+data ReqSketch k s = ReqSketch
+  { rankAccuracySetting :: !RankAccuracy
   , criterion :: !Criterion
-  , ltEq :: Bool
   , totalN :: !(URef s Word64)
   , minValue :: !(URef s Double)
   , maxValue :: !(URef s Double )
@@ -56,27 +54,61 @@ data ReqSketch s k = ReqSketch
   , compactors :: !(MutVar s (Vector.Vector (ReqCompactor k s)))
   }
 
+instance TakeSnapshot (ReqSketch k) where
+  data Snapshot (ReqSketch k) = ReqSketchSnapshot
+    { snapshotRankAccuracySetting :: !RankAccuracy
+    , snapshotCriterion :: !Criterion
+    , snapshotTotalN :: !Word64
+    , snapshotMinValue :: !Double
+    , snapshotMaxValue :: !Double
+    , snapshotRetainedItems :: !Int
+    , snapshotMaxNominalCapacitiesSize :: !Int
+    -- , aux :: !(MutVar s (Maybe ()))
+    , snapshotCompactors :: !(Vector.Vector (Snapshot (ReqCompactor k)))
+    }
+  takeSnapshot ReqSketch{..} = ReqSketchSnapshot rankAccuracySetting criterion
+    <$> readURef totalN
+    <*> readURef minValue
+    <*> readURef maxValue
+    <*> readURef retainedItems
+    <*> readURef maxNominalCapacitiesSize
+    <*> (readMutVar compactors >>= mapM takeSnapshot)
+
+deriving instance Show (Snapshot (ReqSketch k))    
+
 type ValidK k = (4 <= k, k <= 1024, (k `Mod` 2) ~ 0)
 
-mkReqSketch :: (PrimMonad m, ValidK k) => RankAccuracy -> m (ReqSketch (PrimState m) k)
-mkReqSketch = undefined
+mkReqSketch :: forall k m. (PrimMonad m, ValidK k) => RankAccuracy -> m (ReqSketch k (PrimState m))
+mkReqSketch rank = do
+  r <- ReqSketch rank (:<) 
+    <$> newURef 0
+    <*> newURef (0 / 0)
+    <*> newURef (0 / 0)
+    <*> newURef 0
+    <*> newURef 0
+    <*> newMutVar Nothing
+    <*> (newMutVar Vector.empty)
+  grow r
+  pure r
 
-getCompactors :: PrimMonad m => ReqSketch (PrimState m) k -> m (Vector.Vector (ReqCompactor k (PrimState m)))
+  
+
+getCompactors :: PrimMonad m => ReqSketch k (PrimState m) -> m (Vector.Vector (ReqCompactor k (PrimState m)))
 getCompactors = readMutVar . compactors
 
-getNumLevels :: PrimMonad m => ReqSketch (PrimState m) k -> m Int
+getNumLevels :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getNumLevels = fmap Vector.length . getCompactors
 
-getIsEmpty :: PrimMonad m => ReqSketch (PrimState m) k -> m Bool
+getIsEmpty :: PrimMonad m => ReqSketch k (PrimState m) -> m Bool
 getIsEmpty = fmap (== 0) . readURef . totalN
 
-getN :: PrimMonad m => ReqSketch (PrimState m) k -> m Word64
+getN :: PrimMonad m => ReqSketch k (PrimState m) -> m Word64
 getN = readURef . totalN
 
-getRetainedItems :: PrimMonad m => ReqSketch (PrimState m) k -> m Int
+getRetainedItems :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getRetainedItems = readURef . retainedItems
 
-getMaxNominalCapacity :: PrimMonad m => ReqSketch (PrimState m) k -> m Int
+getMaxNominalCapacity :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getMaxNominalCapacity = readURef . maxNominalCapacitiesSize
 
 validateSplits :: [Double] -> ()
@@ -87,7 +119,7 @@ validateSplits (s:splits) = const () $ foldl check s splits
       | v <= lastV = error "Values must be unique and monotonically increasing"
       | otherwise = v
 
-getCounts :: (PrimMonad m, KnownNat k) => ReqSketch (PrimState m) k -> [Double] -> m [Word64]
+getCounts :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m [Word64]
 getCounts this values = do
   compactors <- getCompactors this
   let numValues = length values
@@ -106,7 +138,7 @@ getCounts this values = do
             pure $ fromIntegral value + fromIntegral count_ * wt
       mapM (updateCounts buff) acc
 
-getPMForCDF :: (PrimMonad m, KnownNat k) => ReqSketch (PrimState m) k -> [Double] -> m [Word64]
+getPMForCDF :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m [Word64]
 getPMForCDF this splits = do
   pure $ validateSplits splits
   let numSplits = length splits
@@ -115,7 +147,7 @@ getPMForCDF this splits = do
   n <- getN this
   pure $ (++ [n]) $ take numBuckets $ splitCounts
 
-cumulativeDistributionFunction :: (PrimMonad m, KnownNat k) => ReqSketch (PrimState m) k -> [Double] -> m (Maybe [Double])
+cumulativeDistributionFunction :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m (Maybe [Double])
 cumulativeDistributionFunction this splitPoints = do
   isEmpty <- getIsEmpty this
   if (not isEmpty)
@@ -132,14 +164,14 @@ rankAccuracy = rankAccuracySetting
 relativeStandardError :: ReqSketch s k -> Int -> Double -> RankAccuracy -> Int -> Double
 relativeStandardError = undefined 
 
-minimum :: PrimMonad m => ReqSketch (PrimState m) k -> m Double
+minimum :: PrimMonad m => ReqSketch k (PrimState m) -> m Double
 minimum = readURef . minValue
 
-maximum :: PrimMonad m => ReqSketch (PrimState m) k -> m Double
+maximum :: PrimMonad m => ReqSketch k (PrimState m) -> m Double
 maximum = readURef . maxValue
 
 -- not public
-count :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch s k -> Double -> m Word64
+count :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> Double -> m Word64
 count s value = fromIntegral <$> do
   empty <- null s
   if empty
@@ -153,16 +185,16 @@ count s value = fromIntegral <$> do
             pure (accum + (fromIntegral count_ * wt))
       Vector.foldM go 0 compactors
 
-probabilityMassFunction :: ReqSketch s k -> [Double] -> [Double]
+probabilityMassFunction :: ReqSketch k s -> [Double] -> [Double]
 probabilityMassFunction  = undefined
 
-quantile :: ReqSketch s k -> Double -> Double
+quantile :: ReqSketch k s -> Double -> Double
 quantile = undefined
 
-quantiles :: ReqSketch s k -> [Double] -> Double
+quantiles :: ReqSketch k s -> [Double] -> Double
 quantiles = undefined
 
-rank :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch s k -> Double -> m Double 
+rank :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> Double -> m Double 
 rank s value = do
   isEmpty <- null s
   if isEmpty
@@ -177,7 +209,7 @@ rank s value = do
 rankLowerBound :: ReqSketch s k -> Double -> Int -> Double
 rankLowerBound s rank numStdDev = undefined
 
-ranks :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch s k -> [Double] -> m [Double]
+ranks :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> [Double] -> m [Double]
 ranks s values = do
   isEmpty <- null s
   if isEmpty
@@ -190,10 +222,10 @@ rankUpperBound :: ReqSketch s k -> Double -> Int -> Double
 rankUpperBound = undefined
 
 -- | Renamed from isEmpty
-null :: (PrimMonad m) => ReqSketch (PrimState m) k -> m Bool
+null :: (PrimMonad m) => ReqSketch k (PrimState m) -> m Bool
 null = fmap (== 0) . readURef . totalN
 
-isEstimationMode :: PrimMonad m => ReqSketch (PrimState m) k -> m Bool
+isEstimationMode :: PrimMonad m => ReqSketch k (PrimState m) -> m Bool
 isEstimationMode = fmap (> 1) . getNumLevels
 
 isLessThanOrEqual :: ReqSketch s k -> Bool
@@ -201,7 +233,7 @@ isLessThanOrEqual s = case criterion s of
   (:<) -> False
   (:<=) -> True
 
-computeMaxNominalSize :: PrimMonad m => ReqSketch (PrimState m) k -> m Int
+computeMaxNominalSize :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 computeMaxNominalSize this = do
   compactors <- getCompactors this
   Vector.foldM countNominalCapacity 0 compactors
@@ -210,7 +242,7 @@ computeMaxNominalSize this = do
       nominalCapacity <- Compactor.getNominalCapacity compactor
       pure $ nominalCapacity + acc
 
-computeTotalRetainedItems :: PrimMonad m => ReqSketch (PrimState m) k -> m Int
+computeTotalRetainedItems :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 computeTotalRetainedItems this = do
   compactors <- getCompactors this
   Vector.foldM countBuffer 0 compactors
@@ -220,7 +252,7 @@ computeTotalRetainedItems this = do
       buffSize <- DoubleBuffer.getCount buff
       pure $ buffSize + acc
 
-grow :: PrimMonad m => ReqSketch (PrimState m) k -> m ()
+grow :: PrimMonad m => ReqSketch k (PrimState m) -> m ()
 grow this = do
   lgWeight <- getNumLevels this
   compactors <- getCompactors this
@@ -228,7 +260,7 @@ grow this = do
   maxNominalCapacity <- computeMaxNominalSize this
   writeURef (maxNominalCapacitiesSize this) maxNominalCapacity
 
-compress :: (PrimMonad m) => ReqSketch (PrimState m) k -> m ()
+compress :: (PrimMonad m) => ReqSketch k (PrimState m) -> m ()
 compress this = do
   compactors <- getCompactors this
   for_ (Vector.indexed compactors) $ \(height, compactor) -> do
@@ -249,9 +281,9 @@ compress this = do
 
 merge 
   :: (PrimMonad m, s ~ PrimState m)
-  => ReqSketch s k 
-  -> ReqSketch s k 
-  -> m (ReqSketch s k)
+  => ReqSketch k s
+  -> ReqSketch k s
+  -> m (ReqSketch k s)
 merge this other = do
   otherIsEmpty <- getIsEmpty other
   when (not otherIsEmpty) $ do
@@ -298,7 +330,7 @@ merge this other = do
 
 -- TODO reset?
 
-update :: (PrimMonad m) => ReqSketch (PrimState m) k -> Double -> m ()
+update :: (PrimMonad m) => ReqSketch k (PrimState m) -> Double -> m ()
 update this item = do
   when (not $ isNaN item) $ do
     isEmpty <- getIsEmpty this
