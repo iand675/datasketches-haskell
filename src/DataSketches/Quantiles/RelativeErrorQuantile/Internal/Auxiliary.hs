@@ -1,4 +1,8 @@
-module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary where
+module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
+  ( ReqAuxiliary
+  , mkAuxiliary
+  , getQuantile
+  ) where
 
 import GHC.TypeLits
 import Control.Monad (when)
@@ -14,26 +18,38 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor (ReqCompa
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor as Compactor
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer (DoubleBuffer)
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
+import qualified Data.Vector.Unboxed as U
 
-data ReqAuxiliary s = ReqAuxiliary
-  { raWeightedItems :: !(MutVar s (MUVector.MVector s (Double, Word64)))
+data ReqAuxiliary = ReqAuxiliary
+  { raWeightedItems :: !(U.Vector (Double, Word64))
   , raHighRankAccuracy :: !RankAccuracy
   , raSize :: !Word64
   }
   deriving (Eq)
 
-mkAuxiliary :: (PrimMonad m, s ~ PrimState m, KnownNat k) => RankAccuracy -> Word64 -> Int -> Vector.Vector (ReqCompactor k s) -> m (ReqAuxiliary s)
+data MReqAuxiliary s = MReqAuxiliary
+  { mraWeightedItems :: !(MutVar s (MUVector.MVector s (Double, Word64)))
+  , mraHighRankAccuracy :: !RankAccuracy
+  , mraSize :: !Word64
+  }
+
+mkAuxiliary :: (PrimMonad m, s ~ PrimState m, KnownNat k) => RankAccuracy -> Word64 -> Int -> Vector.Vector (ReqCompactor k s) -> m ReqAuxiliary
 mkAuxiliary rankAccuracy totalN retainedItems compactors = do
   items <- newMutVar =<< MUVector.new retainedItems
-  let this = ReqAuxiliary
-        { raWeightedItems = items
-        , raHighRankAccuracy = HighRanksAreAccurate
-        , raSize = totalN
+  let this = MReqAuxiliary
+        { mraWeightedItems = items
+        , mraHighRankAccuracy = rankAccuracy
+        , mraSize = totalN
         }
   Vector.foldM_ (mergeBuffers this) 0 compactors
   createCumulativeWeights this
   dedup this
-  pure this
+  items' <- U.unsafeFreeze =<< readMutVar items
+  pure ReqAuxiliary
+    { raWeightedItems = items'
+    , raHighRankAccuracy = rankAccuracy
+    , raSize = totalN
+    }
   where
     mergeBuffers this auxCount compactor = do
       buff <- Compactor.getBuffer compactor
@@ -43,27 +59,27 @@ mkAuxiliary rankAccuracy totalN retainedItems compactors = do
       mergeSortIn this buff weight auxCount
       pure $ auxCount + buffSize
 
-getWeightedItems :: PrimMonad m => ReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) (Double, Word64))
-getWeightedItems = readMutVar . raWeightedItems
+getWeightedItems :: PrimMonad m => MReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) (Double, Word64))
+getWeightedItems = readMutVar . mraWeightedItems
 
-getItems :: PrimMonad m => ReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Double)
+getItems :: PrimMonad m => MReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Double)
 getItems = fmap (fst . MUVector.unzip) . getWeightedItems
 
-getWeights :: PrimMonad m => ReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Word64)
+getWeights :: PrimMonad m => MReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Word64)
 getWeights = fmap (snd . MUVector.unzip) . getWeightedItems
 
-getQuantile :: PrimMonad m => ReqAuxiliary (PrimState m) -> Double -> Bool -> m Double
+getQuantile :: PrimMonad m => MReqAuxiliary (PrimState m) -> Double -> Bool -> m Double
 getQuantile this normalRank ltEq = do
   items <- getItems this
   weights <- getWeights this
   let weightsSize = MUVector.length weights
-      rank = normalRank * fromIntegral (raSize this)
+      rank = normalRank * fromIntegral (mraSize this)
       comparator = if ltEq then (>= rank) else (> rank)
       pred = comparator . fromIntegral
   ix <- binarySearchPBounds pred weights 0 (weightsSize - 1)
   MUVector.read items ix
 
-createCumulativeWeights :: PrimMonad m => ReqAuxiliary (PrimState m) -> m ()
+createCumulativeWeights :: PrimMonad m => MReqAuxiliary (PrimState m) -> m ()
 createCumulativeWeights this = do
   items <- getItems this
   weights <- getWeights this
@@ -73,16 +89,16 @@ createCumulativeWeights this = do
       prevWeight <- MUVector.read weights (i - 1)
       MUVector.write weights i (weight + prevWeight)
   lastWeight <- MUVector.read weights (size - 1)
-  when (lastWeight /= raSize this) $ do
+  when (lastWeight /= mraSize this) $ do
     error "invariant violated: lastWeight does not equal raSize"
 
-dedup :: PrimMonad m => ReqAuxiliary (PrimState m) -> m ()
+dedup :: PrimMonad m => MReqAuxiliary (PrimState m) -> m ()
 dedup this = do
   weightedItems <- getWeightedItems this
   let size = MUVector.length weightedItems
   weightedItemsB <- MUVector.new size
   bi <- doDedup weightedItems size weightedItemsB 0 0
-  writeMutVar (raWeightedItems this) $ MUVector.slice 0 bi weightedItemsB
+  writeMutVar (mraWeightedItems this) $ MUVector.slice 0 bi weightedItemsB
   where
     doDedup weightedItems itemsSize weightedItemsB = go
       where go !i !bi
@@ -107,7 +123,7 @@ dedup this = do
                      MUVector.write weightedItemsB bi (item, weight)
                      go j' (bi + 1)
 
-mergeSortIn :: PrimMonad m => ReqAuxiliary (PrimState m) -> DoubleBuffer (PrimState m) -> Word64 -> Int -> m ()
+mergeSortIn :: PrimMonad m => MReqAuxiliary (PrimState m) -> DoubleBuffer (PrimState m) -> Word64 -> Int -> m ()
 mergeSortIn this otherBuff defaultWeight auxCount = do
   DoubleBuffer.sort otherBuff
   weightedItems <- getWeightedItems this
@@ -115,7 +131,7 @@ mergeSortIn this otherBuff defaultWeight auxCount = do
   otherBuffSize <- DoubleBuffer.getCount otherBuff
   otherBuffCapacity <- DoubleBuffer.getCapacity otherBuff
   let totalSize = otherBuffSize + auxCount
-      height = case raHighRankAccuracy this of
+      height = case mraHighRankAccuracy this of
         HighRanksAreAccurate -> otherBuffCapacity - 1
         LowRanksAreAccurate -> otherBuffSize - 1
   merge weightedItems otherItems (auxCount - 1) (otherBuffSize - 1) height totalSize
