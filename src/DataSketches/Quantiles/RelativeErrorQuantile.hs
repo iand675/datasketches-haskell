@@ -68,6 +68,7 @@ import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuf
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 import GHC.TypeLits
 import Prelude hiding (null, minimum, maximum)
+import Data.Maybe (isNothing)
 
 data ReqSketch k s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
@@ -77,7 +78,7 @@ data ReqSketch k s = ReqSketch
   , maxValue :: !(URef s Double )
   , retainedItems :: !(URef s Int)
   , maxNominalCapacitiesSize :: !(URef s Int)
-  , aux :: !(MutVar s (Maybe (ReqAuxiliary s)))
+  , aux :: !(MutVar s (Maybe ReqAuxiliary))
   , compactors :: !(MutVar s (Vector.Vector (ReqCompactor k s)))
   }
 
@@ -118,7 +119,7 @@ mkReqSketch rank = do
   grow r
   pure r
 
-getAux :: PrimMonad m => ReqSketch k (PrimState m) -> m (Maybe (ReqAuxiliary (PrimState m)))
+getAux :: PrimMonad m => ReqSketch k (PrimState m) -> m (Maybe ReqAuxiliary)
 getAux = readMutVar . aux
 
 getCompactors :: PrimMonad m => ReqSketch k (PrimState m) -> m (Vector.Vector (ReqCompactor k (PrimState m)))
@@ -177,10 +178,10 @@ getPMForCDF this splits = do
 
 -- | Returns an approximation to the Cumulative Distribution Function (CDF), which is the cumulative analog of the PMF, 
 -- of the input stream given a set of splitPoint (values).
-cumulativeDistributionFunction 
-  :: (PrimMonad m, KnownNat k) 
-  => ReqSketch k (PrimState m) 
-  -> [Double] 
+cumulativeDistributionFunction
+  :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
+  -> [Double]
   -- ^ Returns an approximation to the Cumulative Distribution Function (CDF), 
   -- which is the cumulative analog of the PMF, of the input stream given a set of 
   -- splitPoint (values).
@@ -273,7 +274,7 @@ probabilityMassFunction this splitPoints = do
        pure probs
 
 -- | Gets the approximate quantile of the given normalized rank based on the lteq criterion.
-quantile 
+quantile
   :: (PrimMonad m, KnownNat k)
   => ReqSketch k (PrimState m)
   -> Double
@@ -288,7 +289,7 @@ quantile this normRank = do
        when (normRank < 0 || normRank > 1.0) $
          error $ "Normalized rank must be in the range [0.0, 1.0]: " ++ show normRank
        currAuxiliary <- getAux this
-       when (currAuxiliary == Nothing) $ do
+       when (isNothing currAuxiliary) $ do
          total <- getN this
          retainedItems <- getRetainedItems this
          compactors <- getCompactors this
@@ -296,7 +297,7 @@ quantile this normRank = do
          writeMutVar (aux this) (Just newAuxiliary)
        mAuxiliary <- getAux this
        case mAuxiliary of
-         Just auxiliary -> Auxiliary.getQuantile auxiliary normRank $ isLessThanOrEqual this
+         Just auxiliary -> pure $! Auxiliary.getQuantile auxiliary normRank $ isLessThanOrEqual this
          Nothing -> error "invariant violated: aux is not set"
 
 -- | Gets an array of quantiles that correspond to the given array of normalized ranks.
