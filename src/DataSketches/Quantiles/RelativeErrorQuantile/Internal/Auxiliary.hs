@@ -16,9 +16,8 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer (Doubl
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
 
 data ReqAuxiliary s = ReqAuxiliary
-  { raItems :: !(MutVar s (MUVector.MVector s Double))
-  , raWeights :: !(MutVar s (MUVector.MVector s Word64))
-  , raHighRankAccuracy :: !Bool
+  { raWeightedItems :: !(MutVar s (MUVector.MVector s (Double, Word64)))
+  , raHighRankAccuracy :: !RankAccuracy
   , raSize :: !Word64
   }
   deriving (Eq)
@@ -26,11 +25,9 @@ data ReqAuxiliary s = ReqAuxiliary
 mkAuxiliary :: (PrimMonad m, s ~ PrimState m, KnownNat k) => RankAccuracy -> Word64 -> Int -> Vector.Vector (ReqCompactor k s) -> m (ReqAuxiliary s)
 mkAuxiliary rankAccuracy totalN retainedItems compactors = do
   items <- newMutVar =<< MUVector.new retainedItems
-  weights <- newMutVar =<< MUVector.new retainedItems
   let this = ReqAuxiliary
-        { raItems = items
-        , raWeights = weights
-        , raHighRankAccuracy = rankAccuracy == HighRanksAreAccurate
+        { raWeightedItems = items
+        , raHighRankAccuracy = HighRanksAreAccurate
         , raSize = totalN
         }
   Vector.foldM_ (mergeBuffers this) 0 compactors
@@ -46,11 +43,14 @@ mkAuxiliary rankAccuracy totalN retainedItems compactors = do
       mergeSortIn this buff weight auxCount
       pure $ auxCount + buffSize
 
+getWeightedItems :: PrimMonad m => ReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) (Double, Word64))
+getWeightedItems = readMutVar . raWeightedItems
+
 getItems :: PrimMonad m => ReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Double)
-getItems = readMutVar . raItems
+getItems = fmap (fst . MUVector.unzip) . getWeightedItems
 
 getWeights :: PrimMonad m => ReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Word64)
-getWeights = readMutVar . raWeights
+getWeights = fmap (snd . MUVector.unzip) . getWeightedItems
 
 getQuantile :: PrimMonad m => ReqAuxiliary (PrimState m) -> Double -> Bool -> m Double
 getQuantile this normalRank ltEq = do
@@ -78,82 +78,67 @@ createCumulativeWeights this = do
 
 dedup :: PrimMonad m => ReqAuxiliary (PrimState m) -> m ()
 dedup this = do
-  items <- getItems this
-  weights <- getWeights this
-  let size = MUVector.length items
-  itemsB <- MUVector.new size
-  weightsB <- MUVector.new size
-  bi <- doDedup items weights size itemsB weightsB 0 0
-  writeMutVar (raItems this) $ MUVector.slice 0 bi itemsB
-  writeMutVar (raWeights this) $ MUVector.slice 0 bi weightsB
+  weightedItems <- getWeightedItems this
+  let size = MUVector.length weightedItems
+  weightedItemsB <- MUVector.new size
+  bi <- doDedup weightedItems size weightedItemsB 0 0
+  writeMutVar (raWeightedItems this) $ MUVector.slice 0 bi weightedItemsB
   where
-    doDedup items weights itemsSize itemsB weightsB = go
+    doDedup weightedItems itemsSize weightedItemsB = go
       where go !i !bi
               | i >= itemsSize = pure bi
               | otherwise = do
                 let j = i + 1
                     hidup = j
                     countDups !j !hidup = do
-                      itemI <- MUVector.read items i
-                      itemJ <- MUVector.read items j
+                      (itemI, _) <- MUVector.read weightedItems i
+                      (itemJ, _) <- MUVector.read weightedItems j
                       if (j < itemsSize) && (itemI == itemJ)
                          then countDups (j + 1) (hidup + 1)
                          else pure (j, hidup)
                 (j', hidup') <- countDups j hidup
                 if j' - i == 1 -- no dups
                    then do
-                     item <- MUVector.read items i
-                     weight <- MUVector.read weights i
-                     MUVector.write itemsB bi item
-                     MUVector.write weightsB bi weight
+                     (item, weight) <- MUVector.read weightedItems i
+                     MUVector.write weightedItemsB bi (item, weight)
                      go (i + 1) (bi + 1)
                    else do
-                     item <- MUVector.read items hidup'
-                     weight <- MUVector.read weights hidup'
-                     MUVector.write itemsB bi item
-                     MUVector.write weightsB bi weight
+                     (item, weight) <- MUVector.read weightedItems hidup'
+                     MUVector.write weightedItemsB bi (item, weight)
                      go j' (bi + 1)
 
 mergeSortIn :: PrimMonad m => ReqAuxiliary (PrimState m) -> DoubleBuffer (PrimState m) -> Word64 -> Int -> m ()
 mergeSortIn this otherBuff defaultWeight auxCount = do
   DoubleBuffer.sort otherBuff
-  items <- getItems this
-  weights <- getWeights this
+  weightedItems <- getWeightedItems this
   otherItems <- DoubleBuffer.getVector otherBuff
   otherBuffSize <- DoubleBuffer.getCount otherBuff
   otherBuffCapacity <- DoubleBuffer.getCapacity otherBuff
   let totalSize = otherBuffSize + auxCount
-      height = if raHighRankAccuracy this
-                  then otherBuffCapacity - 1
-                  else otherBuffSize - 1
-  merge items weights otherItems (auxCount - 1) (otherBuffSize - 1) height totalSize
+      height = case raHighRankAccuracy this of
+        HighRanksAreAccurate -> otherBuffCapacity - 1
+        LowRanksAreAccurate -> otherBuffSize - 1
+  merge weightedItems otherItems (auxCount - 1) (otherBuffSize - 1) height totalSize
   where
-    merge items weights otherItems = go
+    merge weightedItems otherItems = go
       where
         go !i !j !h !k
           | k <= 0 = pure ()
           | i >= 0 && j >= 0 = do
-            item <- MUVector.read items i
-            weight <- MUVector.read weights i
+            (item, weight) <- MUVector.read weightedItems i
             otherItem <- MUVector.read otherItems h
             if item >= otherItem
                then do
-                 MUVector.write items k item
-                 MUVector.write weights k weight
+                 MUVector.write weightedItems k (item, weight)
                  go (i - 1) j h (k - 1)
                else do
-                 MUVector.write items k otherItem
-                 MUVector.write weights k defaultWeight
+                 MUVector.write weightedItems k (otherItem, defaultWeight)
                  go i (j - 1) (h - 1) (k - 1)
           | i >= 0 = do
-            item <- MUVector.read items i
-            weight <- MUVector.read weights i
-            MUVector.write items k item
-            MUVector.write weights k weight
+            MUVector.read weightedItems i >>= MUVector.write weightedItems k
             go (i - 1) j h (k - 1)
           | j >= 0 = do
             otherItem <- MUVector.read otherItems h
-            MUVector.write items k otherItem
-            MUVector.write weights k defaultWeight
+            MUVector.write weightedItems k (otherItem, defaultWeight)
             go i (j - 1) (h - 1) (k - 1)
           | otherwise = pure ()
