@@ -35,6 +35,7 @@ import Data.Vector.Algorithms.Intro (sortByBounds)
 import Data.Vector.Algorithms.Search
 import GHC.Stack
 import System.IO.Unsafe
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
 
 -- | A special buffer of floats specifically designed to support the ReqCompactor class.
 data DoubleBuffer s = DoubleBuffer
@@ -138,18 +139,13 @@ getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
   (low, high) <- if spaceAtBottom
     then do
       capacity_ <- getCapacity buf
-      pure (capacity_ - count_, capacity_)
+      pure (capacity_ - count_, capacity_ - 1)
     else pure (0, count_)
   
-  v <- UVector.freeze vec
-  ix <- binarySearchPBounds pred vec low high
+  ix <- IS.find criterion vec low high value
   pure $! if ix == high - low
     then 0
-    else ix - low
-  where
-    pred = case criterion of
-      (:<) -> (>= value)
-      (:<=) -> (> value)
+    else ix - low + 1
   
 -- data EvensOrOdds = Evens | Odds
 

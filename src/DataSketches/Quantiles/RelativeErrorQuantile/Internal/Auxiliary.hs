@@ -20,6 +20,8 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer (Doubl
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
 import qualified Data.Vector.Unboxed as U
 import Control.Monad.ST
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch (find)
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
 
 data ReqAuxiliary = ReqAuxiliary
   { raWeightedItems :: !(U.Vector (Double, Word64))
@@ -69,17 +71,18 @@ getItems = fmap (fst . MUVector.unzip) . getWeightedItems
 getWeights :: PrimMonad m => MReqAuxiliary (PrimState m) -> m (MUVector.MVector (PrimState m) Word64)
 getWeights = fmap (snd . MUVector.unzip) . getWeightedItems
 
-getQuantile :: ReqAuxiliary -> Double -> Bool -> Double
+getQuantile :: ReqAuxiliary -> Double -> Criterion  -> Double
 getQuantile this normalRank ltEq = fst (weightedItems U.! ix)
   where
     ix = runST $ do
       v <- U.unsafeThaw $ snd $ U.unzip weightedItems
-      binarySearchPBounds pred v 0 (weightsSize - 1)
+      let search = case ltEq of
+            (:<) -> find (IS.:>)
+            (:<=) -> find (IS.:>=)
+      search v 0 (weightsSize - 1) rank
     weightedItems = raWeightedItems this
     weightsSize = U.length weightedItems
-    rank = normalRank * fromIntegral (raSize this)
-    comparator = if ltEq then (>= rank) else (> rank)
-    pred = comparator . fromIntegral
+    rank = floor (normalRank * fromIntegral (raSize this))
 
 createCumulativeWeights :: PrimMonad m => MReqAuxiliary (PrimState m) -> m ()
 createCumulativeWeights this = do

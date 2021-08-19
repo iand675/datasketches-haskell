@@ -275,7 +275,7 @@ probabilityMassFunction this splitPoints = do
        let computeProb (0, bucket) = bucket / total
            computeProb (i, bucket) = (prevBucket + bucket) / total
              where prevBucket = buckets !! i - 1
-           probs = computeProb <$> (zip [0..] buckets)
+           probs = computeProb <$> zip [0..] buckets
        pure probs
 
 -- | Gets the approximate quantile of the given normalized rank based on the lteq criterion.
@@ -302,7 +302,7 @@ quantile this normRank = do
          writeMutVar (aux this) (Just newAuxiliary)
        mAuxiliary <- getAux this
        case mAuxiliary of
-         Just auxiliary -> pure $! Auxiliary.getQuantile auxiliary normRank $ isLessThanOrEqual this
+         Just auxiliary -> pure $! Auxiliary.getQuantile auxiliary normRank $ criterion this
          Nothing -> error "invariant violated: aux is not set"
 
 -- | Gets an array of quantiles that correspond to the given array of normalized ranks.

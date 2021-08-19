@@ -1,8 +1,17 @@
 module DataSketches.Quantiles.RelativeErrorQuantile.Types where
 import Control.Monad.Primitive
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
 
 data Criterion = (:<) | (:<=)
   deriving (Show, Eq)
+
+instance IS.InequalitySearch Criterion where
+  inequalityCompare c = case c of
+     (:<) -> IS.inequalityCompare (IS.:<)
+     (:<=) -> IS.inequalityCompare(IS.:<=)
+  resolve c = case c of
+     (:<) -> IS.resolve (IS.:<)
+     (:<=) -> IS.resolve (IS.:<=)
 
 data RankAccuracy 
   = HighRanksAreAccurate 

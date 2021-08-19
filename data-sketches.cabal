@@ -34,6 +34,7 @@ library
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
+      DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
       DataSketches.Quantiles.RelativeErrorQuantile.Types
   other-modules:
