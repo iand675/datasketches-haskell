@@ -1,8 +1,12 @@
 module AuxiliarySpec where
 
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
+import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary as Aux
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import Test.Hspec
+import qualified Data.Vector.Unboxed as U
+import qualified Data.List
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
 
 
 spec :: Spec
@@ -26,5 +30,5 @@ checkMergeSortIn ra = specify ("mergeSortIn works. hra=" ++ show ra) $ do
   auxBuilder <- undefined
   Aux.mergeSortIn aux buf1 1 0
   Aux.mergeSortIn aux buf2 2 6
-  aux <- _ auxBuilder
-  getItems aux `shouldBe` U.fromList (Data.List.sort (someItems ++ someItems))
+  aux <- mkAuxiliary ra n _ _
+  fst (unzip $ raWeightedItems aux) `shouldBe` U.fromList (Data.List.sort (someItems ++ someItems))

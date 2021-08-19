@@ -7,11 +7,15 @@ data Criterion = (:<) | (:<=)
 
 instance IS.InequalitySearch Criterion where
   inequalityCompare c = case c of
-     (:<) -> IS.inequalityCompare (IS.:<)
-     (:<=) -> IS.inequalityCompare(IS.:<=)
+    (:<) -> IS.inequalityCompare (IS.:<)
+    (:<=) -> IS.inequalityCompare(IS.:<=)
   resolve c = case c of
-     (:<) -> IS.resolve (IS.:<)
-     (:<=) -> IS.resolve (IS.:<=)
+    (:<) -> IS.resolve (IS.:<)
+    (:<=) -> IS.resolve (IS.:<=)
+  getIndex c = case c of
+    (:<) -> IS.getIndex c
+    (:<=) -> IS.getIndex c
+
 
 data RankAccuracy 
   = HighRanksAreAccurate 

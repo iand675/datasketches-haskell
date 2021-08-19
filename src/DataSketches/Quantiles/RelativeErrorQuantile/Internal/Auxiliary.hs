@@ -1,7 +1,9 @@
 module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
-  ( ReqAuxiliary
+  ( ReqAuxiliary(..)
   , mkAuxiliary
   , getQuantile
+  -- | Really extra private, just needed for tests
+  , mergeSortIn
   ) where
 
 import GHC.TypeLits
