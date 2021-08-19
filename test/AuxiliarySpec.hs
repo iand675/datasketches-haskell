@@ -1,5 +1,7 @@
 module AuxiliarySpec where
 
+import Data.Primitive.MutVar
+import qualified Data.Vector.Unboxed.Mutable as MUVector
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary as Aux
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
@@ -26,9 +28,9 @@ checkMergeSortIn ra = specify ("mergeSortIn works. hra=" ++ show ra) $ do
   buf2 <- mkBuffer 25 0 hraBool
   mapM_ (append buf2) someItems
   let n = 12
-
-  auxBuilder <- undefined
+  weightedItems <- newMutVar =<< MUVector.new 25  
+  let aux = MReqAuxiliary weightedItems ra n
   Aux.mergeSortIn aux buf1 1 0
   Aux.mergeSortIn aux buf2 2 6
-  aux <- mkAuxiliary ra n _ _
-  fst (unzip $ raWeightedItems aux) `shouldBe` U.fromList (Data.List.sort (someItems ++ someItems))
+  weightedItems' <- U.freeze =<< readMutVar (mraWeightedItems aux)
+  fst (U.unzip $ weightedItems') `shouldBe` U.fromList (Data.List.sort (someItems ++ someItems))

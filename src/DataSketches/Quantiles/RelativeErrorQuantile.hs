@@ -24,12 +24,14 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeApplications #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
-  ( ReqSketch
+  ( ReqSketch (..)
   , ValidK
   , mkReqSketch
+  , getN
   , getCompactors
   , getNumLevels
   , getRetainedItems
+  , computeTotalRetainedItems
   , cumulativeDistributionFunction
   , RankAccuracy(..)
   , rankAccuracy
@@ -336,16 +338,24 @@ rank s value = do
       total <- readURef $ totalN s
       pure (fromIntegral nnCount / fromIntegral total)
 
+
+-- getRankLB k levels rank numStdDev hra totalN = if exactRank k levels rank hra totalN
+
 -- | Returns an approximate lower bound rank of the given normalized rank.
 rankLowerBound
-  :: ReqSketch s k
+  :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
   -> Double
   -- ^ rank - the given rank, a value between 0 and 1.0.
   -> Int
   -- ^ numStdDev - the number of standard deviations. Must be 1, 2, or 3.
-  -> Double
+  -> m Double
   -- ^ an approximate lower bound rank.
-rankLowerBound s rank numStdDev = undefined
+rankLowerBound this rank numStdDev = do
+  numLevels <- getNumLevels this
+  let k = fromIntegral $ getK this
+  total <- getN this
+  pure $ getRankLB k numLevels rank numStdDev (rankAccuracySetting this == HighRanksAreAccurate) total
 
 -- | Gets an array of normalized ranks that correspond to the given array of values.
 ranks :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> [Double] -> m [Double]
@@ -358,14 +368,19 @@ ranks s values = do
 
 -- | Returns an approximate upper bound rank of the given rank.
 rankUpperBound
-  :: ReqSketch s k
+  :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
   -> Double
   -- ^ rank - the given rank, a value between 0 and 1.0.
   -> Int
   -- ^ numStdDev - the number of standard deviations. Must be 1, 2, or 3.
-  -> Double
+  -> m Double
   -- ^ an approximate upper bound rank.
-rankUpperBound = undefined
+rankUpperBound this rank numStdDev= do
+  numLevels <- getNumLevels this
+  let k = fromIntegral $ getK this
+  total <- getN this
+  pure $ getRankUB k numLevels rank numStdDev (rankAccuracySetting this == HighRanksAreAccurate) total
 
 -- | Returns true if this sketch is empty.
 null :: (PrimMonad m) => ReqSketch k (PrimState m) -> m Bool

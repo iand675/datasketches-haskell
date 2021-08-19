@@ -1,5 +1,6 @@
 module DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
   ( ReqAuxiliary(..)
+  , MReqAuxiliary (..)
   , mkAuxiliary
   , getQuantile
   -- | Really extra private, just needed for tests

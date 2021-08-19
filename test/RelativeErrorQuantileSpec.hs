@@ -1,31 +1,36 @@
+{-# LANGUAGE TypeApplications #-}
 module RelativeErrorQuantileSpec where
 
+import Data.Primitive.MutVar
+import qualified Data.Vector.Unboxed as U
 import Control.Monad
 import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
 import Data.List
+import Data.Maybe (fromJust)
 import Data.Proxy
 import GHC.TypeLits
 import Test.Hspec
 
 spec :: Spec
 spec = do
-  specify "non finite PMF/CDF should throw" $ do
-    rs <- mkReqSketch @6 HighRanksAreAccurate
+  specify "non finite PMF/CDF should throw" $ asIO $ do
+    sk <- mkReqSketch @6 HighRanksAreAccurate
     update sk 1
-    getCDF sk [0 / 0] `shouldThrow` anyException
-  specify "updating a sketch with NaN should ignore it" $ do
-    rs <- mkReqSketch @6 HighRanksAreAccurate
+    cumulativeDistributionFunction sk [0 / 0] `shouldThrow` anyException
+  specify "updating a sketch with NaN should ignore it" $ asIO $ do
+    sk <- mkReqSketch @6 HighRanksAreAccurate
     update sk (0 / 0)
-    isEmpty <- null rs
+    isEmpty <- DataSketches.Quantiles.RelativeErrorQuantile.null sk
     isEmpty `shouldBe` True
-  specify "non finite rank should throw" $ do
+  specify "non finite rank should throw" $ asIO $ do
     let infinity = (read "Infinity")::Double
-    rs <- mkReqSketch @6 HighRanksAreAccurate
+    sk <- mkReqSketch @6 HighRanksAreAccurate
     update sk 1
     rank sk infinity `shouldThrow` anyException
-  specify "big merge doesn't explode" $ do
+  specify "big merge doesn't explode" $ asIO $ do
     sk1 <- mkReqSketch @6 HighRanksAreAccurate
     mapM_ (update sk1) [5..10]
     sk2 <- mkReqSketch @6 HighRanksAreAccurate
@@ -36,24 +41,25 @@ spec = do
     n `shouldBe` 20
     mapM_ (update sk2) [16..300]
     merge sk1 sk2
-  specify "simple test" $ do
-    sk <- mkReqSketch @20 HighRanksAreAccurate
+    pure ()
+  specify "simple test" $ asIO $ do
+    sk <- mkReqSketch @50 HighRanksAreAccurate
     let vs = [5, 5, 5, 6, 6, 6, 7, 8, 8, 8]
     let lessThanRs = [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.6, 0.7, 0.7, 0.7]
-    mapM_ (update sk) 
+    mapM_ (update sk) vs
     do
-      actualRanks <- ranks vs
+      actualRanks <- ranks sk vs
       actualRanks `shouldBe` lessThanRs
     do
-      actualRanks <- mapM rank vs
+      actualRanks <- mapM (rank sk) vs
       actualRanks `shouldBe` lessThanRs
     let sk' = sk { criterion = (:<=) }
     let lessThanEqRs = [0.3, 0.3, 0.3, 0.6, 0.6, 0.6, 0.7, 1.0, 1.0, 1.0]
     do
-      actualRanks <- ranks vs'
+      actualRanks <- ranks sk' vs
       actualRanks `shouldBe` lessThanEqRs
     do
-      actualRanks <- mapM rank vs'
+      actualRanks <- mapM (rank sk') vs
       actualRanks `shouldBe` lessThanEqRs
 
 
@@ -119,14 +125,18 @@ loadSketch k min_ max_ hra ltEq up = do
 
 checkAux :: ReqSketch n (PrimState IO) -> IO ()
 checkAux sk = do
-  aux <- auxilliary sk
+  mAuxiliary <- readMutVar $ aux sk
   totalCount <- computeTotalRetainedItems sk
-  initialRow <- getRow aux 0
-  otherRows <- mapM (getRow aux) [1..totalCount]
-  foldM
+  let auxiliary = fromJust mAuxiliary
+      rows = raWeightedItems auxiliary
+      getRow = (U.!)
+  let initialRow = getRow rows 0
+      otherRows = map (getRow rows) [1..totalCount]
+  foldM_
     (\lastRow thisRow -> do
-      item thisRow `shouldSatisfy` (>= item lastRow)
-      weight thisRow `shouldSatisfy` (>= weight lastRow)
+      fst thisRow `shouldSatisfy` (>= fst lastRow)
+      snd thisRow `shouldSatisfy` (>= snd lastRow)
+      pure thisRow
     )
     initialRow
     otherRows
@@ -147,14 +157,14 @@ checkGetRank sk min_ max_ = do
 
 checkGetRankConcreteExample :: RankAccuracy -> Criterion -> IO ()
 checkGetRankConcreteExample ra crit = do
-  sk <- loadSketch (Proxy :: Proxy 12) 1 1000 ra crit
-  rLB <- rankLowerBound 0.5 1
+  sk <- loadSketch (Proxy :: Proxy 12) 1 1000 ra crit True
+  rLB <- rankLowerBound sk 0.5 1
   rLB `shouldSatisfy` (> 0)
   rLB <- case ra of
     HighRanksAreAccurate -> rankLowerBound sk (995 / 1000) 1
     LowRanksAreAccurate -> rankLowerBound sk (5 / 1000) 1
   rLB `shouldSatisfy` (> 0)
-  rUB <- rankUpperBound 0.5 1
+  rUB <- rankUpperBound sk 0.5 1
   rUB `shouldSatisfy` (> 0)
   rUB <- case ra of
     HighRanksAreAccurate -> rankUpperBound sk (995 / 1000) 1
