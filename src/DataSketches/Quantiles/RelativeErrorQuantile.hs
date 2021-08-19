@@ -51,7 +51,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , update
   ) where
 
-import Control.Monad (when, unless)
+import Control.Monad (when, unless, foldM, foldM_)
 import Control.Monad.Primitive
 import Control.Monad.Trans
 import Data.Bits (shiftL)
@@ -145,24 +145,25 @@ getRetainedItems = readURef . retainedItems
 getMaxNominalCapacity :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getMaxNominalCapacity = readURef . maxNominalCapacitiesSize
 
-validateSplits :: [Double] -> ()
-validateSplits (s:splits) = const () $ foldl check s splits
+validateSplits :: Monad m => [Double] -> m ()
+validateSplits [] = error "Splits may not be empty"
+validateSplits (s:splits) = foldM_ check s splits
   where
     check v lastV
       | isInfinite v = error "Values must be finite"
       | v <= lastV = error "Values must be unique and monotonically increasing"
-      | otherwise = v
+      | otherwise = pure v
 
 getCounts :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m [Word64]
 getCounts this values = do
   compactors <- getCompactors this
   let numValues = length values
       numCompactors = Vector.length compactors
-      ans = take numValues $ repeat 0
+      ans = replicate numValues 0
   isEmpty <- getIsEmpty this
   if isEmpty
     then pure []
-    else Vector.ifoldM doCount ans $ compactors
+    else Vector.ifoldM doCount ans compactors
   where
     doCount acc index compactor = do
       let wt = (1 `shiftL` fromIntegral (Compactor.getLgWeight compactor)) :: Word64
@@ -174,12 +175,12 @@ getCounts this values = do
 
 getPMForCDF :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m [Word64]
 getPMForCDF this splits = do
-  pure $ validateSplits splits
+  () <- validateSplits splits
   let numSplits = length splits
       numBuckets = numSplits -- + 1
   splitCounts <- getCounts this splits
   n <- getN this
-  pure $ (++ [n]) $ take numBuckets $ splitCounts
+  pure $ (++ [n]) $ take numBuckets splitCounts
 
 -- | Returns an approximation to the Cumulative Distribution Function (CDF), which is the cumulative analog of the PMF, 
 -- of the input stream given a set of splitPoint (values).
