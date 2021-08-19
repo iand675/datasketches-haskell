@@ -53,7 +53,7 @@ spec = do
     do
       actualRanks <- mapM (rank sk) vs
       actualRanks `shouldBe` lessThanRs
-    let sk' = sk { criterion = (:<=) }
+    let sk' = sk { criterion = (:<=) } :: ReqSketch 50 (PrimState IO)
     let lessThanEqRs = [0.3, 0.3, 0.3, 0.6, 0.6, 0.6, 0.7, 1.0, 1.0, 1.0]
     do
       actualRanks <- ranks sk' vs

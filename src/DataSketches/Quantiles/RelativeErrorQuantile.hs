@@ -45,7 +45,6 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , rankLowerBound
   , ranks
   , rankUpperBound
-  , retainedItems
   , null
   , isEstimationMode
   , isLessThanOrEqual
