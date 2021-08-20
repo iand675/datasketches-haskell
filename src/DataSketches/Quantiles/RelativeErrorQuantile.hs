@@ -262,7 +262,7 @@ count s value = fromIntegral <$> do
     then pure 0
     else do
       compactors <- getCompactors s
-      let go accum compactor = do
+      let go !accum compactor = do
             let wt = (1 `shiftL` fromIntegral (Compactor.getLgWeight compactor)) :: Word64
             buf <- Compactor.getBuffer compactor
             count_ <- DoubleBuffer.getCountWithCriterion buf value (criterion s)

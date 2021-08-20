@@ -141,13 +141,9 @@ newtype DoubleIsNonFiniteException = DoubleIsNonFiniteException Double
 
 instance Exception DoubleIsNonFiniteException
 
-assertDoubleFiniteness :: Double -> Double
-assertDoubleFiniteness x = if isNaN x || isInfinite x
-  then throw $ DoubleIsNonFiniteException x
-  else x
-
 getCountWithCriterion :: PrimMonad m => DoubleBuffer (PrimState m) -> Double -> Criterion -> m Int
 getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
+  when (isNaN value || isInfinite value) $ throw $ DoubleIsNonFiniteException value
   sort buf
   count_ <- getCount buf
   vec <- getVector buf
@@ -157,7 +153,7 @@ getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
       pure (capacity_ - count_, capacity_ - 1)
     else pure (0, count_)
 
-  ix <- IS.find criterion vec low high $ assertDoubleFiniteness value
+  ix <- IS.find criterion vec low high value
   pure $! if ix == MUVector.length vec
     then 0
     else ix - low + 1
