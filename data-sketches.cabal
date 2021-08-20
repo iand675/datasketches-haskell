@@ -54,6 +54,7 @@ library
   build-depends:
       base >=4.7 && <5
     , cereal
+    , ghc-prim
     , mtl
     , mwc-random
     , prettyprinter
@@ -85,9 +86,11 @@ test-suite data-sketches-test
       TypeOperators
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      QuickCheck
+    , base >=4.7 && <5
     , cereal
     , data-sketches
+    , ghc-prim
     , hspec
     , hspec-discover
     , mtl
@@ -121,6 +124,7 @@ benchmark bench
     , cereal
     , criterion
     , data-sketches
+    , ghc-prim
     , mtl
     , mwc-random
     , prettyprinter

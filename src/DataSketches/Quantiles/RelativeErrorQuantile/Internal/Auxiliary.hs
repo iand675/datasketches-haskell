@@ -31,7 +31,7 @@ data ReqAuxiliary = ReqAuxiliary
   , raHighRankAccuracy :: !RankAccuracy
   , raSize :: !Word64
   }
-  deriving (Eq)
+  deriving (Show, Eq)
 
 data MReqAuxiliary s = MReqAuxiliary
   { mraWeightedItems :: !(MutVar s (MUVector.MVector s (Double, Word64)))
@@ -77,7 +77,10 @@ getWeights = fmap (snd . MUVector.unzip) . getWeightedItems
 getQuantile :: ReqAuxiliary -> Double -> Criterion  -> Double
 getQuantile this normalRank ltEq = fst (weightedItems U.! ix)
   where
-    ix = runST $ do
+    ix = if searchResult == U.length weightedItems
+      then searchResult - 1
+      else searchResult
+    searchResult = runST $ do
       v <- U.unsafeThaw $ snd $ U.unzip weightedItems
       let search = case ltEq of
             (:<) -> find (IS.:>)
@@ -114,12 +117,14 @@ dedup this = do
               | otherwise = do
                 let j = i + 1
                     hidup = j
-                    countDups !j !hidup = do
-                      (itemI, _) <- MUVector.read weightedItems i
-                      (itemJ, _) <- MUVector.read weightedItems j
-                      if (j < itemsSize) && (itemI == itemJ)
-                         then countDups (j + 1) (hidup + 1)
-                         else pure (j, hidup)
+                    countDups !j !hidup = if j < itemsSize 
+                      then do
+                        (itemI, _) <- MUVector.read weightedItems i
+                        (itemJ, _) <- MUVector.read weightedItems j
+                        if itemI == itemJ
+                          then countDups (j + 1) (hidup + 1)
+                          else pure (j, hidup)
+                      else pure (j, hidup)
                 (j', hidup') <- countDups j hidup
                 if j' - i == 1 -- no dups
                    then do
@@ -132,37 +137,40 @@ dedup this = do
                      go j' (bi + 1)
 
 mergeSortIn :: PrimMonad m => MReqAuxiliary (PrimState m) -> DoubleBuffer (PrimState m) -> Word64 -> Int -> m ()
-mergeSortIn this otherBuff defaultWeight auxCount = do
-  DoubleBuffer.sort otherBuff
+mergeSortIn this bufIn defaultWeight auxCount = do
+  DoubleBuffer.sort bufIn
   weightedItems <- getWeightedItems this
-  otherItems <- DoubleBuffer.getVector otherBuff
-  otherBuffSize <- DoubleBuffer.getCount otherBuff
-  otherBuffCapacity <- DoubleBuffer.getCapacity otherBuff
-  let totalSize = otherBuffSize + auxCount
+  otherItems <- DoubleBuffer.getVector bufIn
+  otherBuffSize <- DoubleBuffer.getCount bufIn
+  otherBuffCapacity <- DoubleBuffer.getCapacity bufIn
+  let totalSize = otherBuffSize + auxCount - 1
       height = case mraHighRankAccuracy this of
         HighRanksAreAccurate -> otherBuffCapacity - 1
         LowRanksAreAccurate -> otherBuffSize - 1
-  merge weightedItems otherItems (auxCount - 1) (otherBuffSize - 1) height totalSize
+  merge totalSize weightedItems otherItems (auxCount - 1) (otherBuffSize - 1) height 
   where
-    merge weightedItems otherItems = go
+    merge totalSize weightedItems otherItems = go totalSize
       where
-        go !i !j !h !k
-          | k <= 0 = pure ()
+        go !k !i !j !h 
+          | k < 0 = pure ()
           | i >= 0 && j >= 0 = do
             (item, weight) <- MUVector.read weightedItems i
             otherItem <- MUVector.read otherItems h
             if item >= otherItem
                then do
                  MUVector.write weightedItems k (item, weight)
-                 go (i - 1) j h (k - 1)
+                 continue (i - 1) j h
                else do
                  MUVector.write weightedItems k (otherItem, defaultWeight)
-                 go i (j - 1) (h - 1) (k - 1)
+                 continue i (j - 1) (h - 1)
           | i >= 0 = do
             MUVector.read weightedItems i >>= MUVector.write weightedItems k
-            go (i - 1) j h (k - 1)
+            continue (i - 1) j h
           | j >= 0 = do
             otherItem <- MUVector.read otherItems h
             MUVector.write weightedItems k (otherItem, defaultWeight)
-            go i (j - 1) (h - 1) (k - 1)
+            continue i (j - 1) (h - 1)
           | otherwise = pure ()
+          where
+            continue = go (k - 1)
+

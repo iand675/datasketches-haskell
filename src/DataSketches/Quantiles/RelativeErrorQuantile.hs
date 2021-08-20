@@ -50,6 +50,9 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , isLessThanOrEqual
   , merge
   , update
+  , CumulativeDistributionInvariants(..)
+  -- Test only?
+  , mkAuxiliaryFromReqSketch
   ) where
 
 import Control.Monad (when, unless, foldM, foldM_)
@@ -72,6 +75,11 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 import GHC.TypeLits
 import Prelude hiding (null, minimum, maximum)
 import Data.Maybe (isNothing)
+import qualified Data.Foldable
+import qualified Data.List
+import GHC.Exception.Type (Exception)
+import Control.Exception (throw, assert)
+import Debug.Trace (trace, traceM)
 
 data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
@@ -122,6 +130,13 @@ mkReqSketch rank = do
   grow r
   pure r
 
+mkAuxiliaryFromReqSketch :: PrimMonad m => ReqSketch k (PrimState m) -> m ReqAuxiliary
+mkAuxiliaryFromReqSketch this = do
+  total <- getN this
+  retainedItems <- getRetainedItems this
+  compactors <- getCompactors this
+  Auxiliary.mkAuxiliary (rankAccuracySetting this) total retainedItems compactors
+
 getAux :: PrimMonad m => ReqSketch k (PrimState m) -> m (Maybe ReqAuxiliary)
 getAux = readMutVar . aux
 
@@ -146,14 +161,22 @@ getRetainedItems = readURef . retainedItems
 getMaxNominalCapacity :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getMaxNominalCapacity = readURef . maxNominalCapacitiesSize
 
+data CumulativeDistributionInvariants
+  = CumulativeDistributionInvariantsSplitsAreEmpty
+  | CumulativeDistributionInvariantsSplitsAreNotFinite
+  | CumulativeDistributionInvariantsSplitsAreNotUniqueAndMontonicallyIncreasing
+  deriving (Show, Eq)
+
+instance Exception CumulativeDistributionInvariants
+
 validateSplits :: Monad m => [Double] -> m ()
-validateSplits [] = error "Splits may not be empty"
-validateSplits (s:splits) = foldM_ check s splits
-  where
-    check v lastV
-      | isInfinite v = error "Values must be finite"
-      | v <= lastV = error "Values must be unique and monotonically increasing"
-      | otherwise = pure v
+validateSplits splits = do
+  when (Data.Foldable.null splits) $ do
+    throw CumulativeDistributionInvariantsSplitsAreEmpty
+  when (any isInfinite splits || any isNaN splits) $ do
+    throw CumulativeDistributionInvariantsSplitsAreNotFinite
+  when (Data.List.nub (Data.List.sort splits) /= splits) $ do
+    throw CumulativeDistributionInvariantsSplitsAreNotUniqueAndMontonicallyIncreasing
 
 getCounts :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> [Double] -> m [Word64]
 getCounts this values = do
@@ -199,12 +222,12 @@ cumulativeDistributionFunction
   -- If the sketch is empty this returns 'Nothing'.
   -> m (Maybe [Double])
 cumulativeDistributionFunction this splitPoints = do
+  buckets <- getPMForCDF this splitPoints
   isEmpty <- getIsEmpty this
   if isEmpty
     then pure Nothing
     else do
       let numBuckets = length splitPoints + 1
-      buckets <- getPMForCDF this splitPoints
       n <- getN this
       pure $ Just $ (/ fromIntegral n) . fromIntegral <$> buckets
 
@@ -322,8 +345,8 @@ quantiles this normRanks = do
      else mapM (quantile this) normRanks
 
 -- | Computes the normalized rank of the given value in the stream. The normalized rank is the fraction of values less than the given value; or if lteq is true, the fraction of values less than or equal to the given value.
-rank :: (PrimMonad m, s ~ PrimState m, KnownNat k)
-  => ReqSketch k s
+rank :: (PrimMonad m, KnownNat k)
+  => ReqSketch k (PrimState m)
   -> Double
   -- ^ value - the given value
   -> m Double
@@ -357,13 +380,9 @@ rankLowerBound this rank numStdDev = do
   pure $ getRankLB k numLevels rank numStdDev (rankAccuracySetting this == HighRanksAreAccurate) total
 
 -- | Gets an array of normalized ranks that correspond to the given array of values.
+-- TODO, make it ifaster
 ranks :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> [Double] -> m [Double]
-ranks s values = do
-  isEmpty <- null s
-  if isEmpty
-    then pure []
-    else do
-      error "TODO"
+ranks s values = mapM (rank s) values
 
 -- | Returns an approximate upper bound rank of the given rank.
 rankUpperBound
@@ -417,11 +436,10 @@ computeTotalRetainedItems this = do
 grow :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> m ()
 grow this = do
   lgWeight <- fromIntegral <$> getNumLevels this
-  compactors <- getCompactors this
   let rankAccuracy = rankAccuracySetting this
       sectionSize = getK this
   newCompactor <- Compactor.mkReqCompactor lgWeight rankAccuracy sectionSize
-  let compactors' = Vector.snoc compactors $ newCompactor
+  modifyMutVar' (compactors this) (`Vector.snoc` newCompactor)
   maxNominalCapacity <- computeMaxNominalSize this
   writeURef (maxNominalCapacitiesSize this) maxNominalCapacity
 
@@ -434,10 +452,11 @@ compress this = do
     nominalCapacity <- Compactor.getNominalCapacity compactor
     when (buffSize >= nominalCapacity) $ do
       numLevels <- getNumLevels this
-      when (height + 1 > numLevels) $ do
+      when (height + 1 >= numLevels) $ do
         grow this
+      compactors' <- getCompactors this
       cReturn <- Compactor.compact compactor
-      let topCompactor = compactors ! (height + 1)
+      let topCompactor = compactors' ! (height + 1)
       buff <- Compactor.getBuffer topCompactor
       DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
       modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
@@ -476,6 +495,7 @@ merge this other = do
     thisCompactors <- getCompactors this
     otherCompactors <- getCompactors other
     Vector.zipWithM_ Compactor.merge thisCompactors otherCompactors
+    traceM "compactor merged"
     -- update state
     maxNominalCapacity <- computeMaxNominalSize this
     totalRetainedItems <- computeTotalRetainedItems this
@@ -484,9 +504,11 @@ merge this other = do
     -- compress and check invariants
     when (totalRetainedItems >= maxNominalCapacity) $ do
       compress this
-    unless (totalRetainedItems < maxNominalCapacity) $ do
-      error "invariant violated: totalRetainedItems is not smaller than maxNominalCapacity"
-    writeMutVar (aux this) Nothing
+    maxNominalCapacity' <- computeMaxNominalSize this
+    totalRetainedItems' <- computeTotalRetainedItems this
+    traceM $ show (totalRetainedItems', maxNominalCapacity')
+    assert (totalRetainedItems' < maxNominalCapacity') $ 
+      writeMutVar (aux this) Nothing
   pure this
   where
     growUntil target = do
@@ -510,6 +532,7 @@ update this item = do
          when (item > max_) $ writeURef (maxValue this) item
     compactor <- (! 0) <$> getCompactors this
     buff <- Compactor.getBuffer compactor
+    DoubleBuffer.append buff item
     modifyURef (retainedItems this) (+1)
     modifyURef (totalN this) (+1)
     retItems <-  getRetainedItems this

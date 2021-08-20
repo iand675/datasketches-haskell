@@ -100,28 +100,25 @@ compact this = do
   state <- readURef $ rcState this
   let trailingOnes = countTrailingZeros $ complement state
       sectionsToCompact = min trailingOnes $ fromIntegral numSections
-  compactionRange <- computeCompactionRange this sectionsToCompact
-  let compactionStart = fromIntegral $ compactionRange .&. 0xFFFFFFFF -- low 32
-      compactionEnd = fromIntegral $ compactionRange `shiftR` 32 -- high 32
-  when (compactionEnd - compactionStart >= 2) $
-    error "invariant violated: compaction range too large"
-  coin <- if state .&. 1 == 1
-     then readURef $ rcLastFlip this
-     else flipCoin
-  writeURef (rcLastFlip this) coin
-  buff <- getBuffer this
-  promote <- getEvensOrOdds buff compactionStart compactionEnd coin
-  trimCount buff $ startBuffSize - (compactionEnd - compactionStart)
-  writeURef (rcState this) $ state + 1
-  ensureEnoughSections this
-  endBuffSize <- getCount buff
-  promoteBuffSize <- getCount promote
-  endNominalCapacity <- getNominalCapacity this
-  pure $ CompactorReturn
-    { crDeltaRetItems = endBuffSize - startBuffSize + promoteBuffSize
-    , crDeltaNominalSize = endNominalCapacity - startNominalCapacity
-    , crDoubleBuffer = promote
-    }
+  (compactionStart, compactionEnd) <- computeCompactionRange this sectionsToCompact
+  assert (compactionEnd - compactionStart >= 2) $ do
+    coin <- if state .&. 1 == 1
+      then readURef $ rcLastFlip this
+      else flipCoin
+    writeURef (rcLastFlip this) coin
+    buff <- getBuffer this
+    promote <- getEvensOrOdds buff compactionStart compactionEnd coin
+    trimCount buff $ startBuffSize - (compactionEnd - compactionStart)
+    writeURef (rcState this) $ state + 1
+    ensureEnoughSections this
+    endBuffSize <- getCount buff
+    promoteBuffSize <- getCount promote
+    endNominalCapacity <- getNominalCapacity this
+    pure $ CompactorReturn
+      { crDeltaRetItems = endBuffSize - startBuffSize + promoteBuffSize
+      , crDeltaNominalSize = endNominalCapacity - startNominalCapacity
+      , crDoubleBuffer = promote
+      }
 
 getLgWeight :: ReqCompactor s -> Word8
 getLgWeight = rcLgWeight
@@ -167,7 +164,9 @@ merge this otherCompactor = assert (rcLgWeight this == rcLgWeight otherCompactor
   sort otherBuff
   otherBuffIsBigger <- (>) <$> getCount otherBuff <*> getCount buff
   finalBuff <- if otherBuffIsBigger
-     then mergeSortIn otherBuff buff >> pure otherBuff
+     then do
+       otherBuff' <- copyBuffer otherBuff
+       mergeSortIn otherBuff' buff >> pure otherBuff'
      else mergeSortIn buff otherBuff >> pure buff
   otherState <- readURef $ rcState otherCompactor
   modifyURef (rcState this) (.|. otherState)
@@ -199,6 +198,9 @@ ensureEnoughSections compactor = do
        writeURef (rcSectionSizeFlt compactor) szf
        writeURef (rcSectionSize compactor) $ fromIntegral ne
        writeURef (rcNumSections compactor) $ numSections `shiftL` 1
+       buf <- getBuffer compactor
+       nomCapacity <- getNominalCapacity compactor
+       ensureCapacity buf (2 * nomCapacity)
        pure True
      else pure False
 
@@ -208,7 +210,7 @@ computeCompactionRange
   => ReqCompactor (PrimState m) 
   -> Int 
   -- ^ secsToCompact the number of contiguous sections to compact
-  -> m Word64
+  -> m (Int, Int)
 -- ^ the start and end indices of the compacted region in compact form
 computeCompactionRange this secsToCompact = do
   buffSize <- getCount =<< getBuffer this
@@ -217,11 +219,10 @@ computeCompactionRange this secsToCompact = do
   sectionSize <- readURef $ rcSectionSize this
   let nonCompact :: Int
       nonCompact = floor $ fromIntegral nominalCapacity / 2 + fromIntegral (toInt numSections - secsToCompact * toInt sectionSize)
-      (low, high) =
-        case rcRankAccuracy this of
-            HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact)
-            LowRanksAreAccurate -> (fromIntegral nonCompact, fromIntegral buffSize)
-  pure $ low + (high `shiftL` 32)
+  pure $ case rcRankAccuracy this of
+    HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact)
+    LowRanksAreAccurate -> (nonCompact, buffSize)
+
 -- | Returns the nearest even integer to the given value. Also used by test.
 nearestEven 
   :: Double 

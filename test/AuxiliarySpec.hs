@@ -20,17 +20,20 @@ checkMergeSortIn ra = specify ("mergeSortIn works. hra=" ++ show ra) $ do
   let hraBool = case ra of
         HighRanksAreAccurate -> True
         LowRanksAreAccurate -> False
-  let someItems = [1,3..12] -- 6 items
+  let oddItems = [1,3..11] -- 6 items
+  let evenItems = [2,4..12]
 
   buf1 <- mkBuffer 25 0 hraBool
-  mapM_ (append buf1) someItems
+  mapM_ (append buf1) oddItems
   
   buf2 <- mkBuffer 25 0 hraBool
-  mapM_ (append buf2) someItems
+  mapM_ (append buf2) evenItems
+
   let n = 12
   weightedItems <- newMutVar =<< MUVector.new 25  
   let aux = MReqAuxiliary weightedItems ra n
   Aux.mergeSortIn aux buf1 1 0
   Aux.mergeSortIn aux buf2 2 6
-  weightedItems' <- U.freeze =<< readMutVar (mraWeightedItems aux)
-  fst (U.unzip $ weightedItems') `shouldBe` U.fromList (Data.List.sort (someItems ++ someItems))
+  (items, _) <- fmap U.unzip . U.freeze =<< readMutVar (mraWeightedItems aux)
+  let itemsToCheck = U.slice 0 (fromIntegral n) items
+  itemsToCheck `shouldBe` U.fromList (Data.List.sort (oddItems ++ evenItems))

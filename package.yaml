@@ -44,6 +44,7 @@ dependencies:
 - vector-algorithms
 - prettyprinter
 - cereal
+- ghc-prim
 
 library:
   source-dirs: src
@@ -60,6 +61,7 @@ tests:
     - data-sketches
     - hspec
     - hspec-discover
+    - QuickCheck
 
 benchmarks:
   bench:

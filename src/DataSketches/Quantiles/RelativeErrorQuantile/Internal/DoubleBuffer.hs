@@ -1,8 +1,10 @@
+{-# LANGUAGE MagicHash #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
   ( DoubleBuffer
   , Capacity
   , GrowthIncrement
   , SpaceAtBottom
+  , DoubleIsNonFiniteException(..)
   , mkBuffer
   , copyBuffer
   , append
@@ -33,9 +35,12 @@ import qualified Data.Vector.Unboxed.Mutable as MUVector
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 import Data.Vector.Algorithms.Intro (sortByBounds)
 import Data.Vector.Algorithms.Search
+import GHC.Prim
 import GHC.Stack
-import System.IO.Unsafe
+import System.IO.Unsafe ()
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
+import Control.Exception
+import Debug.Trace
 
 -- | A special buffer of floats specifically designed to support the ReqCompactor class.
 data DoubleBuffer s = DoubleBuffer
@@ -54,7 +59,7 @@ instance TakeSnapshot DoubleBuffer where
     , dbSnapshotGrowthIncrement :: !Int
     , dbSnapshotSpaceAtBottom :: !Bool
     }
-  takeSnapshot DoubleBuffer{..} = DoubleBufferSnapshot 
+  takeSnapshot DoubleBuffer{..} = DoubleBufferSnapshot
     <$> (readMutVar vec >>= UVector.freeze)
     <*> readURef count
     <*> readURef sorted
@@ -126,10 +131,20 @@ ensureCapacity buf@DoubleBuffer{..} newCapacity = do
       else pure (0, 0)
     oldVec <- getVector buf
     newVec <- MUVector.new newCapacity
-    MUVector.unsafeCopy 
-      (MUVector.slice destPos count_ newVec) 
-      (MUVector.slice srcPos count_ oldVec) 
+    MUVector.unsafeCopy
+      (MUVector.slice destPos count_ newVec)
+      (MUVector.slice srcPos count_ oldVec)
     writeMutVar vec newVec
+
+newtype DoubleIsNonFiniteException = DoubleIsNonFiniteException Double
+  deriving (Show, Eq)
+
+instance Exception DoubleIsNonFiniteException
+
+assertDoubleFiniteness :: Double -> Double
+assertDoubleFiniteness x = if isNaN x || isInfinite x
+  then throw $ DoubleIsNonFiniteException x
+  else x
 
 getCountWithCriterion :: PrimMonad m => DoubleBuffer (PrimState m) -> Double -> Criterion -> m Int
 getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
@@ -141,12 +156,12 @@ getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
       capacity_ <- getCapacity buf
       pure (capacity_ - count_, capacity_ - 1)
     else pure (0, count_)
-  
-  ix <- IS.find criterion vec low high value
-  pure $! if ix == high - low
+
+  ix <- IS.find criterion vec low high $ assertDoubleFiniteness value
+  pure $! if ix == MUVector.length vec
     then 0
     else ix - low + 1
-  
+
 -- data EvensOrOdds = Evens | Odds
 
 getEvensOrOdds :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> Int -> Bool -> m (DoubleBuffer (PrimState m))
@@ -179,7 +194,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
           , spaceAtBottom = spaceAtBottom
           }
 
-  
+
 
 (!) :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m Double
 (!) buf offset = do
@@ -191,7 +206,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
     else pure offset
   vec <- getVector buf
   MUVector.read vec index
-  
+
 getCount :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
 getCount = readURef . count
 
@@ -209,7 +224,7 @@ sort :: PrimMonad m => DoubleBuffer (PrimState m) -> m ()
 sort buf@DoubleBuffer{..} = do
   sorted_ <- isSorted buf
   unless sorted_ $ do
-    capacity_ <- getCapacity buf 
+    capacity_ <- getCapacity buf
     count_ <- getCount buf
     let (start, end) = if spaceAtBottom
           then (capacity_ - count_, capacity_)
@@ -221,6 +236,10 @@ sort buf@DoubleBuffer{..} = do
 -- | Merges the incoming sorted buffer into this sorted buffer.
 mergeSortIn :: (PrimMonad m, HasCallStack) => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m ()
 mergeSortIn this bufIn = do
+  case reallyUnsafePtrEquality# this bufIn of
+    0# -> pure ()
+    1# -> error "Trying to merge this double buffer with itself"
+    _ -> error "Impossible"
   sort this
   sort bufIn
 
@@ -237,6 +256,7 @@ mergeSortIn this bufIn = do
     then do -- scan up, insert at bottom
       capacity_ <- getCapacity this
       bufInCapacity_ <- getCapacity bufIn
+      inSs <- takeSnapshot bufIn
       let i = capacity_ - count_
       let j = bufInCapacity_ - bufInLen
       let targetStart = capacity_ - totalLength
@@ -253,7 +273,7 @@ mergeSortIn this bufIn = do
   pure ()
   where
     mergeUpwards thisBuf thatBuf capacity_ bufInCapacity_ = go
-      where 
+      where
         go !i !j !k
           -- for loop ended
           | k >= capacity_ = pure ()
