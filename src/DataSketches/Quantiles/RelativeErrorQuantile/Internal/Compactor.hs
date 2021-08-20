@@ -103,13 +103,13 @@ compact this = do
   (compactionStart, compactionEnd) <- computeCompactionRange this sectionsToCompact
   assert (compactionEnd - compactionStart >= 2) $ do
     coin <- if state .&. 1 == 1
-      then readURef $ rcLastFlip this
+      then fmap not $ readURef $ rcLastFlip this
       else flipCoin
     writeURef (rcLastFlip this) coin
     buff <- getBuffer this
     promote <- getEvensOrOdds buff compactionStart compactionEnd coin
     trimCount buff $ startBuffSize - (compactionEnd - compactionStart)
-    writeURef (rcState this) $ state + 1
+    modifyURef (rcState this) (+ 1)
     ensureEnoughSections this
     endBuffSize <- getCount buff
     promoteBuffSize <- getCount promote
@@ -157,20 +157,23 @@ merge
   -- ^ The compactor to merge from 
   -> m (ReqCompactor s)
 merge this otherCompactor = assert (rcLgWeight this == rcLgWeight otherCompactor) $ do
+  otherState <- readURef $ rcState otherCompactor
+  modifyURef (rcState this) (.|. otherState)
   ensureMaxSections
+
   buff <- getBuffer this
-  otherBuff <- getBuffer otherCompactor
   sort buff
+
+  otherBuff <- getBuffer otherCompactor
   sort otherBuff
+
   otherBuffIsBigger <- (>) <$> getCount otherBuff <*> getCount buff
   finalBuff <- if otherBuffIsBigger
      then do
-       otherBuff' <- copyBuffer otherBuff
-       mergeSortIn otherBuff' buff >> pure otherBuff'
-     else mergeSortIn buff otherBuff >> pure buff
-  otherState <- readURef $ rcState otherCompactor
-  modifyURef (rcState this) (.|. otherState)
-  writeMutVar (rcBuffer this) finalBuff
+        otherBuff' <- copyBuffer otherBuff
+        mergeSortIn otherBuff' buff
+        writeMutVar (rcBuffer this) otherBuff'
+     else mergeSortIn buff otherBuff
   pure this
   where
     ensureMaxSections = do
@@ -197,7 +200,7 @@ ensureEnoughSections compactor = do
      then do
        writeURef (rcSectionSizeFlt compactor) szf
        writeURef (rcSectionSize compactor) $ fromIntegral ne
-       writeURef (rcNumSections compactor) $ numSections `shiftL` 1
+       modifyURef (rcNumSections compactor) (`shiftL` 1)
        buf <- getBuffer compactor
        nomCapacity <- getNominalCapacity compactor
        ensureCapacity buf (2 * nomCapacity)

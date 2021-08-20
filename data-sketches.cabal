@@ -57,6 +57,7 @@ library
     , ghc-prim
     , mtl
     , mwc-random
+    , pretty-show
     , prettyprinter
     , primitive
     , vector
@@ -95,6 +96,7 @@ test-suite data-sketches-test
     , hspec-discover
     , mtl
     , mwc-random
+    , pretty-show
     , prettyprinter
     , primitive
     , vector
@@ -127,6 +129,7 @@ benchmark bench
     , ghc-prim
     , mtl
     , mwc-random
+    , pretty-show
     , prettyprinter
     , primitive
     , vector

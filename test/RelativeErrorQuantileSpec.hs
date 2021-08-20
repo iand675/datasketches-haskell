@@ -14,6 +14,7 @@ import Data.Proxy
 import GHC.TypeLits
 import Test.Hspec
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer (DoubleIsNonFiniteException(..))
+import Text.Show.Pretty
 
 spec :: Spec
 spec = do
@@ -39,11 +40,11 @@ spec = do
     mapM_ (update sk2) [1..15]
     merge sk1 sk2
     n <- getN sk1
-    n `shouldBe` 20
+    n `shouldBe` 21
     mapM_ (update sk2) [16..300]
     merge sk1 sk2
     n <- getN sk1
-    n `shouldBe` 306
+    n `shouldBe` 321
   describe "property tests" $ do
     specify "ReqSketch quantile estimates are within ε bounds compared to real quantile calculations" $ print ()
     specify "merging N ReqSketches is equivalent +/- ε to inserting the same values into 1 ReqSketch" $ print ()
@@ -102,10 +103,10 @@ bigTest k min_ max_ hra crit up = do
         sk <- loadSketch k min_ max_ hra crit up
         checkAux sk
         checkGetRank sk min_ max_
-        -- checkGetRanks sk, max
+        checkGetRanks sk max_
         checkGetQuantiles sk
-        -- checkGetCDF sk
-        -- checkGetPMF sk
+        checkGetCDF sk
+        checkGetPMF sk
         -- checkIterator sk
         -- checkMerge sk
   it testName testContents

@@ -79,7 +79,6 @@ import qualified Data.Foldable
 import qualified Data.List
 import GHC.Exception.Type (Exception)
 import Control.Exception (throw, assert)
-import Debug.Trace (trace, traceM)
 
 data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
@@ -495,7 +494,6 @@ merge this other = do
     thisCompactors <- getCompactors this
     otherCompactors <- getCompactors other
     Vector.zipWithM_ Compactor.merge thisCompactors otherCompactors
-    traceM "compactor merged"
     -- update state
     maxNominalCapacity <- computeMaxNominalSize this
     totalRetainedItems <- computeTotalRetainedItems this
@@ -504,9 +502,8 @@ merge this other = do
     -- compress and check invariants
     when (totalRetainedItems >= maxNominalCapacity) $ do
       compress this
-    maxNominalCapacity' <- computeMaxNominalSize this
-    totalRetainedItems' <- computeTotalRetainedItems this
-    traceM $ show (totalRetainedItems', maxNominalCapacity')
+    maxNominalCapacity' <- readURef $ maxNominalCapacitiesSize this
+    totalRetainedItems' <- readURef $ retainedItems this
     assert (totalRetainedItems' < maxNominalCapacity') $ 
       writeMutVar (aux this) Nothing
   pure this
@@ -535,11 +532,11 @@ update this item = do
     DoubleBuffer.append buff item
     modifyURef (retainedItems this) (+1)
     modifyURef (totalN this) (+1)
-    retItems <-  getRetainedItems this
+    retItems <- getRetainedItems this
     maxNominalCapacity <- getMaxNominalCapacity this
-    when (retItems < maxNominalCapacity) $ do
-       DoubleBuffer.sort buff
-       compress this
+    when (retItems >= maxNominalCapacity) $ do
+      DoubleBuffer.sort buff
+      compress this
     writeMutVar (aux this) Nothing
 
 -- Private pure bits

@@ -43,6 +43,7 @@ dependencies:
 - primitive
 - vector-algorithms
 - prettyprinter
+- pretty-show
 - cereal
 - ghc-prim
 
