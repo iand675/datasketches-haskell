@@ -220,11 +220,11 @@ computeCompactionRange this secsToCompact = do
   nominalCapacity <- getNominalCapacity this
   numSections <- readURef $ rcNumSections this
   sectionSize <- readURef $ rcSectionSize this
-  let nonCompact :: Int
-      nonCompact = floor $ fromIntegral nominalCapacity / 2 + fromIntegral (toInt numSections - secsToCompact * toInt sectionSize)
+  let nonCompact = (nominalCapacity `div` 2) + (fromIntegral numSections - secsToCompact) * (fromIntegral sectionSize)
+      nonCompact' = if ((buffSize - nonCompact) .&. 1 == 1) then nonCompact - 1 else nonCompact
   pure $ case rcRankAccuracy this of
-    HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact)
-    LowRanksAreAccurate -> (nonCompact, buffSize)
+    HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact')
+    LowRanksAreAccurate -> (nonCompact', buffSize)
 
 -- | Returns the nearest even integer to the given value. Also used by test.
 nearestEven 
