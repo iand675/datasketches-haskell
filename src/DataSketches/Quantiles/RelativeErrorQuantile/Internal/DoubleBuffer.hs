@@ -40,7 +40,6 @@ import GHC.Stack
 import System.IO.Unsafe ()
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
 import Control.Exception
-import Debug.Trace
 
 -- | A special buffer of floats specifically designed to support the ReqCompactor class.
 data DoubleBuffer s = DoubleBuffer

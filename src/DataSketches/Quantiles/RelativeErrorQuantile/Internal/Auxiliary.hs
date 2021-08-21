@@ -25,7 +25,6 @@ import qualified Data.Vector.Unboxed as U
 import Control.Monad.ST
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch (find)
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
-import Debug.Trace
 
 data ReqAuxiliary = ReqAuxiliary
   { raWeightedItems :: !(U.Vector (Double, Word64))
@@ -100,7 +99,6 @@ createCumulativeWeights this = do
       prevWeight <- MUVector.read weights (i - 1)
       MUVector.write weights i (weight + prevWeight)
   lastWeight <- MUVector.read weights (size - 1)
-  traceM . show =<< U.unsafeFreeze =<< readMutVar (mraWeightedItems this)
   when (lastWeight /= mraSize this) $ do
     error "invariant violated: lastWeight does not equal raSize"
 
