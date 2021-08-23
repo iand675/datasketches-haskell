@@ -28,7 +28,6 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 
-
 data CompactorReturn s = CompactorReturn
   { crDeltaRetItems :: {-# UNPACK #-} !Int
   , crDeltaNominalSize :: {-# UNPACK #-} !Int
@@ -100,7 +99,7 @@ compact this = do
   numSections <- readURef $ rcNumSections this
   sectionSize <- readURef $ rcSectionSize this
   state <- readURef $ rcState this
-  let trailingOnes = countTrailingZeros $ complement state
+  let trailingOnes = succ $ countTrailingZeros $ complement state
       sectionsToCompact = min trailingOnes $ fromIntegral numSections
   (compactionStart, compactionEnd) <- computeCompactionRange this sectionsToCompact
   -- TODO, this fails in GHCi but not in tests?
