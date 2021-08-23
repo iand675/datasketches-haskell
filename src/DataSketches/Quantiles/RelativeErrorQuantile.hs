@@ -62,7 +62,7 @@ import Control.Monad (when, unless, foldM, foldM_)
 import Control.Monad.Primitive
 import Control.Monad.Trans
 import Data.Bits (shiftL)
-import Data.Vector ((!))
+import Data.Vector ((!), imapM_)
 import qualified Data.Vector as Vector
 import Data.Primitive.MutVar
 import Data.Proxy
@@ -84,7 +84,7 @@ import GHC.Exception.Type (Exception)
 import Control.Exception (throw, assert)
 import GHC.Generics
 import System.Random.MWC (Gen, create)
-import Data.Vector.Generic (imapM_)
+import qualified Data.Vector.Generic.Mutable as MG
 
 data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
@@ -475,7 +475,7 @@ compress this = do
           DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
           modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
           modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
-  imapM_ compressionStep compactors
+  imapM_ compressionStep compactors 
   writeMutVar (aux this) Nothing
 
 -- | Merge other sketch into this one.
