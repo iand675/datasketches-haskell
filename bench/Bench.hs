@@ -10,14 +10,14 @@ import Criterion.Main
 import Criterion.Types
 import Data.List (foldl')
 import DataSketches.Quantiles.RelativeErrorQuantile
-import Prometheus (register, summary, defaultQuantiles, observe, Info (Info))
+-- import Prometheus (register, summary, defaultQuantiles, observe, Info (Info))
 import Control.Concurrent (withMVar, newMVar)
 
 main :: IO ()
 main = do
   outerSketch <- mkReqSketch @6 HighRanksAreAccurate
-  let metric = summary (Info "adversarial_input" "woo") defaultQuantiles
-  prometheusThing <- register metric
+  -- let metric = summary (Info "adversarial_input" "woo") defaultQuantiles
+  -- prometheusThing <- register metric
   skM <- newMVar =<< mkReqSketch @6 HighRanksAreAccurate
   -- mapM_ (update outerSketch) [1..10000]
   defaultMain
@@ -38,8 +38,8 @@ main = do
     , bgroup "DoubleBuffer"
       [ -- bench "sort" $ 
       ]
-    , bgroup "Prometheus"
-      [ bench "insert/existing" $ whnfIO $
-          observe prometheusThing 1
-      ]
+    -- , bgroup "Prometheus"
+    --   [ bench "insert/existing" $ whnfIO $
+    --       observe prometheusThing 1
+    --   ]
     ]

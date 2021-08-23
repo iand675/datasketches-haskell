@@ -137,7 +137,6 @@ benchmark bench
     , pretty-show
     , prettyprinter
     , primitive
-    , prometheus-client
     , vector
     , vector-algorithms
   default-language: Haskell2010

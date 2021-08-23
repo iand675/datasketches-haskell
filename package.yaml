@@ -1,5 +1,5 @@
 name:                data-sketches
-version:             0.1.0.0
+version:             0.1.0.1
 github:              "iand675/data-sketches"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
@@ -77,4 +77,4 @@ benchmarks:
     dependencies:
     - criterion
     - data-sketches
-    - prometheus-client
+    # - prometheus-client
