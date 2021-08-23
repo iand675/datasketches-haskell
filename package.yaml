@@ -64,6 +64,7 @@ tests:
     - hspec
     - hspec-discover
     - QuickCheck
+    - statistics
 
 benchmarks:
   bench:
