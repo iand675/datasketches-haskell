@@ -111,8 +111,8 @@ find strat v low high x = go low (high - 1)
     go lo hi 
       | lo <= hi && lo < high = do
           let mid = lo + ((hi - lo) `div` 2)
-          midV <- MV.read v mid
-          midV' <- MV.read v (mid + 1)
+          midV <- MV.unsafeRead v mid
+          midV' <- MV.unsafeRead v (mid + 1)
           case inequalityCompare strat x midV midV' of
             LT -> go lo (mid - 1)
             EQ -> getIndex strat v mid (mid + 1) x

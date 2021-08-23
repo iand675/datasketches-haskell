@@ -37,6 +37,7 @@ description:         Please see the README on GitHub at <https://github.com/iand
 
 dependencies:
 - base >= 4.7 && < 5
+- deepseq
 - vector
 - mwc-random
 - mtl
@@ -75,3 +76,4 @@ benchmarks:
     dependencies:
     - criterion
     - data-sketches
+    - prometheus-client

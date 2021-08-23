@@ -1,4 +1,5 @@
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
 module DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
   ( DoubleBuffer
   , Capacity
@@ -43,10 +44,10 @@ import Control.Exception
 
 -- | A special buffer of floats specifically designed to support the ReqCompactor class.
 data DoubleBuffer s = DoubleBuffer
-  { vec :: !(MutVar s (MUVector.MVector s Double))
-  , count :: !(URef s Int)
-  , sorted :: !(URef s Bool)
-  , growthIncrement :: !Int
+  { vec :: {-# UNPACK #-} !(MutVar s (MUVector.MVector s Double))
+  , count :: {-# UNPACK #-} !(URef s Int)
+  , sorted :: {-# UNPACK #-} !(URef s Bool)
+  , growthIncrement :: {-# UNPACK #-} !Int
   , spaceAtBottom :: !Bool
   }
 
@@ -99,8 +100,9 @@ append buf@DoubleBuffer{..} x = do
         <*> getCount buf
     else readURef count
   modifyURef count (+ 1)
-  getVector buf >>= \vec -> MUVector.write vec index x
+  getVector buf >>= \vec -> MUVector.unsafeWrite vec index x
   writeURef sorted False
+{-# SCC append #-}
 
 -- | Ensures that the capacity of this FloatBuffer is at least newCapacity.
 -- If newCapacity &lt; capacity(), no action is taken.
@@ -115,9 +117,11 @@ ensureSpace buf@DoubleBuffer{..} space = do
 
 getVector :: (PrimMonad m, PrimState m ~ s) => DoubleBuffer s -> m (MUVector.MVector s Double)
 getVector = readMutVar . vec
+{-# INLINE getVector #-}
 
 getCapacity :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
 getCapacity = fmap MUVector.length . getVector
+{-# INLINE getCapacity #-}
 
 ensureCapacity :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m ()
 ensureCapacity buf@DoubleBuffer{..} newCapacity = do
@@ -134,6 +138,7 @@ ensureCapacity buf@DoubleBuffer{..} newCapacity = do
       (MUVector.slice destPos count_ newVec)
       (MUVector.slice srcPos count_ oldVec)
     writeMutVar vec newVec
+{-# SCC ensureCapacity #-}
 
 newtype DoubleIsNonFiniteException = DoubleIsNonFiniteException Double
   deriving (Show, Eq)
@@ -175,7 +180,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
     odd = if odds then 1 else 0
     go vec !out !i !j = if j < MUVector.length out
       then do
-        MUVector.write out j =<< MUVector.read vec (i + odd)
+        MUVector.unsafeWrite out j =<< MUVector.unsafeRead vec (i + odd)
         go vec out (i + 2) (j + 1)
       else do
         count <- newURef (MUVector.length out)
@@ -188,7 +193,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
           , growthIncrement = 0
           , spaceAtBottom = spaceAtBottom
           }
-
+{-# SCC getEvensOrOdds #-}
 
 
 (!) :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m Double
@@ -200,7 +205,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
       pure $! capacity_ - count_ + offset
     else pure offset
   vec <- getVector buf
-  MUVector.read vec index
+  MUVector.unsafeRead vec index
 
 getCount :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
 getCount = readURef . count
@@ -227,14 +232,11 @@ sort buf@DoubleBuffer{..} = do
     vec <- getVector buf
     sortByBounds compare vec start end
     writeURef sorted True
+{-# SCC sort #-}
 
 -- | Merges the incoming sorted buffer into this sorted buffer.
 mergeSortIn :: (PrimMonad m, HasCallStack) => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m ()
 mergeSortIn this bufIn = do
-  case reallyUnsafePtrEquality# this bufIn of
-    0# -> pure ()
-    1# -> error "Trying to merge this double buffer with itself"
-    _ -> error "Impossible"
   sort this
   sort bufIn
 
@@ -274,18 +276,18 @@ mergeSortIn this bufIn = do
           | k >= capacity_ = pure ()
           -- both valid
           | i < capacity_ && j < bufInCapacity_ = do
-            iVal <- MUVector.read thisBuf i
-            jVal <- MUVector.read thatBuf j
+            iVal <- MUVector.unsafeRead thisBuf i
+            jVal <- MUVector.unsafeRead thatBuf j
             if iVal <= jVal
-              then MUVector.write thisBuf k iVal >> go (i + 1) j (k + 1)
-              else MUVector.write thisBuf k jVal >> go i (j + 1) (k + 1)
+              then MUVector.unsafeWrite thisBuf k iVal >> go (i + 1) j (k + 1)
+              else MUVector.unsafeWrite thisBuf k jVal >> go i (j + 1) (k + 1)
           -- i is valid
           | i < capacity_ = do
-            MUVector.write thisBuf k =<< MUVector.unsafeRead thisBuf i
+            MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thisBuf i
             go (i + 1) j (k + 1)
           -- j is valid
           | j < bufInCapacity_ = do
-            MUVector.write thisBuf k =<< MUVector.unsafeRead thatBuf j
+            MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thatBuf j
             go i (j + 1) (k + 1)
           -- neither is valid, break;
           | otherwise = pure ()
@@ -294,24 +296,24 @@ mergeSortIn this bufIn = do
       | k < 0 = pure ()
       -- both valid
       | i >= 0 && j >= 0 = do
-        iVal <- MUVector.read thisBuf i
-        jVal <- MUVector.read thatBuf j
+        iVal <- MUVector.unsafeRead thisBuf i
+        jVal <- MUVector.unsafeRead thatBuf j
         if iVal >= jVal
           then do
-            MUVector.write thisBuf k iVal >> continue (i - 1) j (k - 1)
+            MUVector.unsafeWrite thisBuf k iVal >> continue (i - 1) j (k - 1)
           else do
-            MUVector.write thisBuf k jVal >> continue i (j - 1) (k - 1)
+            MUVector.unsafeWrite thisBuf k jVal >> continue i (j - 1) (k - 1)
       | i >= 0 = do
-        MUVector.write thisBuf k =<< MUVector.unsafeRead thisBuf i
+        MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thisBuf i
         continue (i - 1) j (k - 1)
       | j >= 0 = do
-        MUVector.write thisBuf k =<< MUVector.unsafeRead thatBuf j
+        MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thatBuf j
         continue i (j - 1) (k - 1)
       -- neither is valid, break;
       | otherwise = pure ()
       where
         continue = mergeDownwards thisBuf thatBuf
-
+{-# SCC mergeSortIn #-}
 
 trimCount :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m ()
 trimCount DoubleBuffer{..} newCount = modifyURef count (\oldCount -> if newCount < oldCount then newCount else oldCount)

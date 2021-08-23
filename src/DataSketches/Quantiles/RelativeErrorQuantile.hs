@@ -23,6 +23,7 @@
 
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DeriveGeneric #-}
 module DataSketches.Quantiles.RelativeErrorQuantile
   ( ReqSketch (..)
   , ValidK
@@ -55,6 +56,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , mkAuxiliaryFromReqSketch
   ) where
 
+import Control.DeepSeq
 import Control.Monad (when, unless, foldM, foldM_)
 import Control.Monad.Primitive
 import Control.Monad.Trans
@@ -79,18 +81,24 @@ import qualified Data.Foldable
 import qualified Data.List
 import GHC.Exception.Type (Exception)
 import Control.Exception (throw, assert)
+import GHC.Generics
+import System.Random.MWC (Gen, create)
 
 data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
   , criterion :: !Criterion
-  , totalN :: !(URef s Word64)
-  , minValue :: !(URef s Double)
-  , maxValue :: !(URef s Double )
-  , retainedItems :: !(URef s Int)
-  , maxNominalCapacitiesSize :: !(URef s Int)
-  , aux :: !(MutVar s (Maybe ReqAuxiliary))
-  , compactors :: !(MutVar s (Vector.Vector (ReqCompactor s)))
-  }
+  , sketchRng :: {-# UNPACK #-} !(Gen s)
+  , totalN :: {-# UNPACK #-} !(URef s Word64)
+  , minValue :: {-# UNPACK #-} !(URef s Double)
+  , maxValue :: {-# UNPACK #-} !(URef s Double )
+  , retainedItems :: {-# UNPACK #-} !(URef s Int)
+  , maxNominalCapacitiesSize :: {-# UNPACK #-} !(URef s Int)
+  , aux :: {-# UNPACK #-} !(MutVar s (Maybe ReqAuxiliary))
+  , compactors :: {-# UNPACK #-} !(MutVar s (Vector.Vector (ReqCompactor s)))
+  } deriving (Generic)
+
+instance NFData (ReqSketch k s) where
+  rnf !rs = ()
 
 instance TakeSnapshot (ReqSketch k) where
   data Snapshot (ReqSketch k) = ReqSketchSnapshot
@@ -119,7 +127,8 @@ type ValidK k = (4 <= k, k <= 1024, (k `Mod` 2) ~ 0)
 mkReqSketch :: forall k m. (PrimMonad m, ValidK k, KnownNat k) => RankAccuracy -> m (ReqSketch k (PrimState m))
 mkReqSketch rank = do
   r <- ReqSketch rank (:<)
-    <$> newURef 0
+    <$> create
+    <*> newURef 0
     <*> newURef (0 / 0)
     <*> newURef (0 / 0)
     <*> newURef 0
@@ -437,7 +446,7 @@ grow this = do
   lgWeight <- fromIntegral <$> getNumLevels this
   let rankAccuracy = rankAccuracySetting this
       sectionSize = getK this
-  newCompactor <- Compactor.mkReqCompactor lgWeight rankAccuracy sectionSize
+  newCompactor <- Compactor.mkReqCompactor (sketchRng this) lgWeight rankAccuracy sectionSize
   modifyMutVar' (compactors this) (`Vector.snoc` newCompactor)
   maxNominalCapacity <- computeMaxNominalSize this
   writeURef (maxNominalCapacitiesSize this) maxNominalCapacity
@@ -446,8 +455,7 @@ compress :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> m ()
 compress this = do
   compactors <- getCompactors this
   Vector.iforM_ compactors $ \height compactor -> do
-    buff <- Compactor.getBuffer compactor
-    buffSize <- DoubleBuffer.getCount buff
+    buffSize <- DoubleBuffer.getCount =<< Compactor.getBuffer compactor
     nominalCapacity <- Compactor.getNominalCapacity compactor
     when (buffSize >= nominalCapacity) $ do
       numLevels <- getNumLevels this
@@ -527,7 +535,7 @@ update this item = do
          max_ <- maximum this
          when (item < min_) $ writeURef (minValue this) item
          when (item > max_) $ writeURef (maxValue this) item
-    compactor <- (! 0) <$> getCompactors this
+    compactor <- Vector.head <$> getCompactors this
     buff <- Compactor.getBuffer compactor
     DoubleBuffer.append buff item
     modifyURef (retainedItems this) (+1)

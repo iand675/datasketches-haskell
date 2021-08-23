@@ -54,6 +54,7 @@ library
   build-depends:
       base >=4.7 && <5
     , cereal
+    , deepseq
     , ghc-prim
     , mtl
     , mwc-random
@@ -91,6 +92,7 @@ test-suite data-sketches-test
     , base >=4.7 && <5
     , cereal
     , data-sketches
+    , deepseq
     , ghc-prim
     , hspec
     , hspec-discover
@@ -126,12 +128,14 @@ benchmark bench
     , cereal
     , criterion
     , data-sketches
+    , deepseq
     , ghc-prim
     , mtl
     , mwc-random
     , pretty-show
     , prettyprinter
     , primitive
+    , prometheus-client
     , vector
     , vector-algorithms
   default-language: Haskell2010

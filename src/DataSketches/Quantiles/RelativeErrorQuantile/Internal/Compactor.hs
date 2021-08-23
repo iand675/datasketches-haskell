@@ -19,7 +19,7 @@ import Data.Proxy
 import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import System.Random.MWC (create, Variate(uniform))
+import System.Random.MWC (create, Variate(uniform), Uniform (uniformM), Gen)
 import Control.Exception (assert)
 import Control.Monad (when)
 import Control.Monad.Trans
@@ -30,22 +30,23 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 
 
 data CompactorReturn s = CompactorReturn
-  { crDeltaRetItems :: !Int
-  , crDeltaNominalSize :: !Int
-  , crDoubleBuffer :: !(DoubleBuffer s)
+  { crDeltaRetItems :: {-# UNPACK #-} !Int
+  , crDeltaNominalSize :: {-# UNPACK #-} !Int
+  , crDoubleBuffer :: {-# UNPACK #-} !(DoubleBuffer s)
   }
 
 data ReqCompactor s = ReqCompactor
   -- Configuration constants
   { rcRankAccuracy :: !RankAccuracy
-  , rcLgWeight :: !Word8
+  , rcLgWeight :: {-# UNPACK #-} !Word8
+  , rcRng :: {-# UNPACK #-} !(Gen s)
   -- State
-  , rcState :: !(URef s Word64)
-  , rcLastFlip :: !(URef s Bool)
-  , rcSectionSizeFlt :: !(URef s Double)
-  , rcSectionSize :: !(URef s Word32)
-  , rcNumSections :: !(URef s Word8)
-  , rcBuffer :: !(MutVar s (DoubleBuffer s))
+  , rcState :: {-# UNPACK #-} !(URef s Word64)
+  , rcLastFlip :: {-# UNPACK #-} !(URef s Bool)
+  , rcSectionSizeFlt :: {-# UNPACK #-} !(URef s Double)
+  , rcSectionSize :: {-# UNPACK #-} !(URef s Word32)
+  , rcNumSections :: {-# UNPACK #-} !(URef s Word8)
+  , rcBuffer :: {-# UNPACK #-} !(MutVar s (DoubleBuffer s))
   }
 
 instance TakeSnapshot ReqCompactor where
@@ -70,14 +71,15 @@ deriving instance Show (Snapshot ReqCompactor)
 
 mkReqCompactor
   :: PrimMonad m
-  => Word8
+  => Gen (PrimState m)
+  -> Word8
   -> RankAccuracy
   -> Word32
   -> m (ReqCompactor (PrimState m))
-mkReqCompactor lgWeight rankAccuracy sectionSize = do
+mkReqCompactor g lgWeight rankAccuracy sectionSize = do
   let nominalCapacity = fromIntegral $ nomCapMulti * initNumberOfSections * sectionSize
   buff <- mkBuffer (nominalCapacity * 2) nominalCapacity (rankAccuracy == HighRanksAreAccurate)
-  ReqCompactor rankAccuracy lgWeight
+  ReqCompactor rankAccuracy lgWeight g
     <$> newURef 0
     <*> newURef False
     <*> newURef (fromIntegral sectionSize)
@@ -101,10 +103,11 @@ compact this = do
   let trailingOnes = countTrailingZeros $ complement state
       sectionsToCompact = min trailingOnes $ fromIntegral numSections
   (compactionStart, compactionEnd) <- computeCompactionRange this sectionsToCompact
+  -- TODO, this fails in GHCi but not in tests?
   assert (compactionEnd - compactionStart >= 2) $ do
     coin <- if state .&. 1 == 1
       then fmap not $ readURef $ rcLastFlip this
-      else flipCoin
+      else flipCoin this
     writeURef (rcLastFlip this) coin
     buff <- getBuffer this
     promote <- getEvensOrOdds buff compactionStart compactionEnd coin
@@ -126,8 +129,8 @@ getLgWeight = rcLgWeight
 getBuffer :: PrimMonad m => ReqCompactor (PrimState m) -> m (DoubleBuffer (PrimState m))
 getBuffer = readMutVar . rcBuffer
 
-flipCoin :: (PrimMonad m) => m Bool
-flipCoin = create >>= uniform
+flipCoin :: (PrimMonad m) => ReqCompactor (PrimState m) -> m Bool
+flipCoin = uniform . rcRng
 
 getCoin :: PrimMonad m => ReqCompactor (PrimState m) -> m Bool
 getCoin = readURef . rcLastFlip
@@ -151,7 +154,7 @@ getState = readURef . rcState
 -- same @lgWeight@
 merge
   :: (PrimMonad m, s ~ PrimState m)
-  => ReqCompactor (PrimState m) 
+  => ReqCompactor (PrimState m)
   -- ^ The compactor to merge into
   -> ReqCompactor (PrimState m)
   -- ^ The compactor to merge from 
@@ -182,9 +185,9 @@ merge this otherCompactor = assert (rcLgWeight this == rcLgWeight otherCompactor
       when adjusted ensureMaxSections
 
 -- | Adjust the sectionSize and numSections if possible.
-ensureEnoughSections 
-  :: PrimMonad m 
-  => ReqCompactor (PrimState m) 
+ensureEnoughSections
+  :: PrimMonad m
+  => ReqCompactor (PrimState m)
   -> m Bool
   -- ^ 'True' if the SectionSize and NumSections were adjusted.
 ensureEnoughSections compactor = do
@@ -208,10 +211,10 @@ ensureEnoughSections compactor = do
      else pure False
 
 -- | Computes the start and end indices of the compacted region
-computeCompactionRange 
-  :: PrimMonad m 
-  => ReqCompactor (PrimState m) 
-  -> Int 
+computeCompactionRange
+  :: PrimMonad m
+  => ReqCompactor (PrimState m)
+  -> Int
   -- ^ secsToCompact the number of contiguous sections to compact
   -> m (Int, Int)
 -- ^ the start and end indices of the compacted region in compact form
@@ -220,15 +223,15 @@ computeCompactionRange this secsToCompact = do
   nominalCapacity <- getNominalCapacity this
   numSections <- readURef $ rcNumSections this
   sectionSize <- readURef $ rcSectionSize this
-  let nonCompact = (nominalCapacity `div` 2) + (fromIntegral numSections - secsToCompact) * (fromIntegral sectionSize)
-      nonCompact' = if ((buffSize - nonCompact) .&. 1 == 1) then nonCompact - 1 else nonCompact
+  let nonCompact = (nominalCapacity `div` 2) + (fromIntegral numSections - secsToCompact) * fromIntegral sectionSize
+      nonCompact' = if (buffSize - nonCompact) .&. 1 == 1 then nonCompact - 1 else nonCompact
   pure $ case rcRankAccuracy this of
     HighRanksAreAccurate -> (0, fromIntegral $ buffSize - nonCompact')
     LowRanksAreAccurate -> (nonCompact', buffSize)
 
 -- | Returns the nearest even integer to the given value. Also used by test.
-nearestEven 
-  :: Double 
+nearestEven
+  :: Double
   -- ^ the given value
   -> Int
   -- ^ the nearest even integer to the given value.

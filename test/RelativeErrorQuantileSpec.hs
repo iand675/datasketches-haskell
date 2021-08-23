@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NumericUnderscores #-}
 module RelativeErrorQuantileSpec where
 
 import Data.Primitive.MutVar
@@ -56,6 +57,11 @@ spec = do
         sk <- mkReqSketch @50 HighRanksAreAccurate
         mapM_ (update sk) simpleTestValues
         pure sk
+  specify "lots of repeat values should work" $ asIO $ do
+    sk <- mkReqSketch @6 HighRanksAreAccurate
+    replicateM_ 10_000 (update sk 1 >> getRetainedItems sk)
+    print =<< getRetainedItems sk
+
   describe "simple test" $ before simpleTestSetup $ do
     describe "<" $ do
       specify "ranks function should match lessThanRs" $ \sk -> do
