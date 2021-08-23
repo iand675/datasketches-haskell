@@ -95,6 +95,16 @@ spec = do
 
   mergeSpec
 
+  describe "quantiles" $ do
+    it "should be reasonable" $ asIO $ do
+      sk <- mkReqSketch @6 HighRanksAreAccurate
+      update sk 1
+      update sk 1
+      update sk 1
+      r <- quantile sk 0.5      
+      r `shouldBe` 1.0
+
+
 bigTest :: Proxy 6 -> Int -> Int -> RankAccuracy -> Criterion -> Bool -> Spec
 bigTest k min_ max_ hra crit up = do
   let testName = unwords

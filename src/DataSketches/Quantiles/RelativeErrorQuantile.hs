@@ -29,6 +29,7 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , ValidK
   , mkReqSketch
   , getN
+  , getSum
   , getCompactors
   , getNumLevels
   , getRetainedItems
@@ -90,7 +91,8 @@ data ReqSketch (k :: Nat) s = ReqSketch
   , sketchRng :: {-# UNPACK #-} !(Gen s)
   , totalN :: {-# UNPACK #-} !(URef s Word64)
   , minValue :: {-# UNPACK #-} !(URef s Double)
-  , maxValue :: {-# UNPACK #-} !(URef s Double )
+  , maxValue :: {-# UNPACK #-} !(URef s Double)
+  , sumValue :: {-# UNPACK #-} !(URef s Double)
   , retainedItems :: {-# UNPACK #-} !(URef s Int)
   , maxNominalCapacitiesSize :: {-# UNPACK #-} !(URef s Int)
   , aux :: {-# UNPACK #-} !(MutVar s (Maybe ReqAuxiliary))
@@ -131,6 +133,7 @@ mkReqSketch rank = do
     <*> newURef 0
     <*> newURef (0 / 0)
     <*> newURef (0 / 0)
+    <*> newURef 0
     <*> newURef 0
     <*> newURef 0
     <*> newMutVar Nothing
@@ -277,6 +280,9 @@ count s value = fromIntegral <$> do
             count_ <- DoubleBuffer.getCountWithCriterion buf value (criterion s)
             pure (accum + (fromIntegral count_ * wt))
       Vector.foldM go 0 compactors
+
+getSum :: (PrimMonad m) => ReqSketch k (PrimState m) -> m Double
+getSum = readURef . sumValue
 
 -- | Returns an approximation to the Probability Mass Function (PMF) of the input stream given a set of splitPoints (values).
 -- The resulting approximations have a probabilistic guarantee that be obtained, a priori, from the getRSE(int, double, boolean, long) function.
@@ -540,6 +546,7 @@ update this item = do
     DoubleBuffer.append buff item
     modifyURef (retainedItems this) (+1)
     modifyURef (totalN this) (+1)
+    modifyURef (sumValue this) (+ item)
     retItems <- getRetainedItems this
     maxNominalCapacity <- getMaxNominalCapacity this
     when (retItems >= maxNominalCapacity) $ do
@@ -562,12 +569,12 @@ getRankLB k levels rank numStdDev hra totalN = if exactRank k levels rank hra to
 getRankUB :: Int -> Int -> Double -> Int -> Bool -> Word64 -> Double
 getRankUB k levels rank numStdDev hra totalN = if exactRank k levels rank hra totalN
   then rank
-  else min lbRel lbFix
+  else min ubRel ubFix
   where
     relative = relRseFactor / fromIntegral k * (if hra then 1.0 - rank else rank)
     fixed = fixRseFactor / fromIntegral k
-    lbRel = rank + fromIntegral numStdDev * relative
-    lbFix = rank + fromIntegral numStdDev * fixed
+    ubRel = rank + fromIntegral numStdDev * relative
+    ubFix = rank + fromIntegral numStdDev * fixed
 
 exactRank :: Int -> Int -> Double -> Bool -> Word64 -> Bool
 exactRank k levels rank hra totalN = (levels == 1 || fromIntegral totalN <= baseCap) || (hra && rank >= 1.0 - exactRankThresh || not hra && rank <= exactRankThresh)

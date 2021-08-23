@@ -205,7 +205,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
       pure $! capacity_ - count_ + offset
     else pure offset
   vec <- getVector buf
-  MUVector.unsafeRead vec index
+  MUVector.read vec index
 
 getCount :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
 getCount = readURef . count
@@ -276,18 +276,18 @@ mergeSortIn this bufIn = do
           | k >= capacity_ = pure ()
           -- both valid
           | i < capacity_ && j < bufInCapacity_ = do
-            iVal <- MUVector.unsafeRead thisBuf i
-            jVal <- MUVector.unsafeRead thatBuf j
+            iVal <- MUVector.read thisBuf i
+            jVal <- MUVector.read thatBuf j
             if iVal <= jVal
               then MUVector.unsafeWrite thisBuf k iVal >> go (i + 1) j (k + 1)
               else MUVector.unsafeWrite thisBuf k jVal >> go i (j + 1) (k + 1)
           -- i is valid
           | i < capacity_ = do
-            MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thisBuf i
+            MUVector.unsafeWrite thisBuf k =<< MUVector.read thisBuf i
             go (i + 1) j (k + 1)
           -- j is valid
           | j < bufInCapacity_ = do
-            MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thatBuf j
+            MUVector.unsafeWrite thisBuf k =<< MUVector.read thatBuf j
             go i (j + 1) (k + 1)
           -- neither is valid, break;
           | otherwise = pure ()
@@ -296,18 +296,18 @@ mergeSortIn this bufIn = do
       | k < 0 = pure ()
       -- both valid
       | i >= 0 && j >= 0 = do
-        iVal <- MUVector.unsafeRead thisBuf i
-        jVal <- MUVector.unsafeRead thatBuf j
+        iVal <- MUVector.read thisBuf i
+        jVal <- MUVector.read thatBuf j
         if iVal >= jVal
           then do
             MUVector.unsafeWrite thisBuf k iVal >> continue (i - 1) j (k - 1)
           else do
             MUVector.unsafeWrite thisBuf k jVal >> continue i (j - 1) (k - 1)
       | i >= 0 = do
-        MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thisBuf i
+        MUVector.unsafeWrite thisBuf k =<< MUVector.read thisBuf i
         continue (i - 1) j (k - 1)
       | j >= 0 = do
-        MUVector.unsafeWrite thisBuf k =<< MUVector.unsafeRead thatBuf j
+        MUVector.unsafeWrite thisBuf k =<< MUVector.read thatBuf j
         continue i (j - 1) (k - 1)
       -- neither is valid, break;
       | otherwise = pure ()

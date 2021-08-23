@@ -32,7 +32,7 @@ newURef a = fmap URef (MUVector.replicate 1 a)
 --
 -- @since 0.0.2.0
 readURef :: (PrimMonad m, Unbox a) => URef (PrimState m) a -> m a
-readURef (URef v) = MUVector.unsafeRead v 0
+readURef (URef v) = MUVector.read v 0
 
 -- | Write a value into a 'URef'. Note that this action is strict, and
 -- will force evalution of the value.
