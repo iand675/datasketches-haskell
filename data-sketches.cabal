@@ -5,10 +5,10 @@ cabal-version: 1.18
 -- see: https://github.com/sol/hpack
 
 name:           data-sketches
-version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/iand675/streaming-quantiles#readme>
-homepage:       https://github.com/iand675/data-sketches#readme
-bug-reports:    https://github.com/iand675/data-sketches/issues
+version:        0.1.0.1
+description:    Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
+homepage:       https://github.com/iand675/datasketches-haskell#readme
+bug-reports:    https://github.com/iand675/datasketches-haskell/issues
 author:         Ian Duncan, Rob Bassi
 maintainer:     ian@iankduncan.com
 copyright:      2021 Ian Duncan, Rob Bassi, Mercury Bank
@@ -25,7 +25,7 @@ extra-doc-files:
 
 source-repository head
   type: git
-  location: https://github.com/iand675/data-sketches
+  location: https://github.com/iand675/datasketches-haskell
 
 library
   exposed-modules:

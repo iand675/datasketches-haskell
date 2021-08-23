@@ -19,7 +19,7 @@ import Data.Proxy
 import Data.Semigroup (Semigroup)
 import Data.Word
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import System.Random.MWC (create, Variate(uniform), Uniform (uniformM), Gen)
+import System.Random.MWC (create, Variate(uniform), Gen)
 import Control.Exception (assert)
 import Control.Monad (when)
 import Control.Monad.Trans

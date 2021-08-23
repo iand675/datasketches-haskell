@@ -1,6 +1,6 @@
 name:                data-sketches
 version:             0.1.0.1
-github:              "iand675/data-sketches"
+github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
 maintainer:          "ian@iankduncan.com"
@@ -33,7 +33,7 @@ extra-doc-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/iand675/streaming-quantiles#readme>
+description:         Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
 
 dependencies:
 - base >= 4.7 && < 5
