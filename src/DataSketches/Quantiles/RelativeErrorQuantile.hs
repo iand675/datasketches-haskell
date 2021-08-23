@@ -84,6 +84,7 @@ import GHC.Exception.Type (Exception)
 import Control.Exception (throw, assert)
 import GHC.Generics
 import System.Random.MWC (Gen, create)
+import Data.Vector.Generic (imapM_)
 
 data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
@@ -460,20 +461,21 @@ grow this = do
 compress :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> m ()
 compress this = do
   compactors <- getCompactors this
-  Vector.iforM_ compactors $ \height compactor -> do
-    buffSize <- DoubleBuffer.getCount =<< Compactor.getBuffer compactor
-    nominalCapacity <- Compactor.getNominalCapacity compactor
-    when (buffSize >= nominalCapacity) $ do
-      numLevels <- getNumLevels this
-      when (height + 1 >= numLevels) $ do
-        grow this
-      compactors' <- getCompactors this
-      cReturn <- Compactor.compact compactor
-      let topCompactor = compactors' ! (height + 1)
-      buff <- Compactor.getBuffer topCompactor
-      DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
-      modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
-      modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
+  let compressionStep height compactor = do
+        buffSize <- DoubleBuffer.getCount =<< Compactor.getBuffer compactor
+        nominalCapacity <- Compactor.getNominalCapacity compactor
+        when (buffSize >= nominalCapacity) $ do
+          numLevels <- getNumLevels this
+          when (height + 1 >= numLevels) $ do
+            grow this
+          compactors' <- getCompactors this
+          cReturn <- Compactor.compact compactor
+          let topCompactor = compactors' ! (height + 1)
+          buff <- Compactor.getBuffer topCompactor
+          DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
+          modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
+          modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
+  imapM_ compressionStep compactors
   writeMutVar (aux this) Nothing
 
 -- | Merge other sketch into this one.
