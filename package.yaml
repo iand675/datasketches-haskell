@@ -1,5 +1,5 @@
 name:                data-sketches
-version:             0.1.0.2
+version:             0.2.0.0
 github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"

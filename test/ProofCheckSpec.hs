@@ -4,7 +4,7 @@ module ProofCheckSpec where
 import Statistics.Quantile
 import Test.Hspec
 import qualified Data.Vector as V
-import DataSketches.Quantiles.RelativeErrorQuantile (mkReqSketch, RankAccuracy (HighRanksAreAccurate), update)
+import DataSketches.Quantiles.RelativeErrorQuantile (mkReqSketch, RankAccuracy (HighRanksAreAccurate), insert)
 import qualified DataSketches.Quantiles.RelativeErrorQuantile as SK
 import Test.QuickCheck
 import Control.Monad.ST
@@ -47,7 +47,7 @@ spec = do
     property $ forAll sampleInputGen $ \(NonEmpty doubles) -> runST $ do
       let sampleData = V.fromList doubles
       sk <- mkReqSketch @6 HighRanksAreAccurate
-      mapM_ (update sk) sampleData
+      mapM_ (insert sk) sampleData
       let ranks = [0.01, 0.02 .. 0.99]
           rankInts = map (floor . (* 100)) ranks
       upperLowerBounds <- mapM (upperAndLowerBound sk) ranks

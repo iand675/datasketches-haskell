@@ -9,7 +9,7 @@ import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
-import Data.List
+import Data.List hiding (insert)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import GHC.TypeLits
@@ -21,30 +21,30 @@ spec :: Spec
 spec = do
   specify "non finite PMF/CDF should throw" $ asIO $ do
     sk <- mkReqSketch @6 HighRanksAreAccurate
-    update sk 1
+    insert sk 1
     cumulativeDistributionFunction sk [0 / 0] `shouldThrow` (== CumulativeDistributionInvariantsSplitsAreNotFinite)
   specify "updating a sketch with NaN should ignore it" $ asIO $ do
     sk <- mkReqSketch @6 HighRanksAreAccurate
-    update sk (0 / 0)
+    insert sk (0 / 0)
     isEmpty <- DataSketches.Quantiles.RelativeErrorQuantile.null sk
     isEmpty `shouldBe` True
   specify "non finite rank should throw" $ asIO $ do
     let infinity = read "Infinity"::Double
     sk <- mkReqSketch @6 HighRanksAreAccurate
-    update sk 1
+    insert sk 1
     (rank sk infinity >>= print) `shouldThrow` (\(DoubleIsNonFiniteException _) -> True)
   specify "big merge doesn't explode" $ asIO $ do
     sk1 <- mkReqSketch @6 HighRanksAreAccurate
-    mapM_ (update sk1) [5..10]
+    mapM_ (insert sk1) [5..10]
     sk2 <- mkReqSketch @6 HighRanksAreAccurate
     merge sk1 sk2
-    mapM_ (update sk2) [1..15]
+    mapM_ (insert sk2) [1..15]
     merge sk1 sk2
-    n <- getN sk1
+    n <- count sk1
     n `shouldBe` 21
-    mapM_ (update sk2) [16..300]
+    mapM_ (insert sk2) [16..300]
     merge sk1 sk2
-    n <- getN sk1
+    n <- count sk1
     n `shouldBe` 321
   describe "property tests" $ do
     specify "ReqSketch quantile estimates are within ε bounds compared to real quantile calculations" $ print ()
@@ -55,12 +55,12 @@ spec = do
   let lessThanEqRs = [0.3, 0.3, 0.3, 0.6, 0.6, 0.6, 0.7, 1.0, 1.0, 1.0]
   let simpleTestSetup = do
         sk <- mkReqSketch @50 HighRanksAreAccurate
-        mapM_ (update sk) simpleTestValues
+        mapM_ (insert sk) simpleTestValues
         pure sk
   specify "lots of repeat values should work" $ asIO $ do
     sk <- mkReqSketch @6 HighRanksAreAccurate
-    replicateM_ 10_000 (update sk 1 >> getRetainedItems sk)
-    print =<< getRetainedItems sk
+    replicateM_ 10_000 (insert sk 1 >> retainedItemCount sk)
+    print =<< retainedItemCount sk
 
   describe "simple test" $ before simpleTestSetup $ do
     describe "<" $ do
@@ -98,9 +98,9 @@ spec = do
   describe "quantiles" $ do
     it "should be reasonable" $ asIO $ do
       sk <- mkReqSketch @6 HighRanksAreAccurate
-      update sk 1
-      update sk 1
-      update sk 1
+      insert sk 1
+      insert sk 1
+      insert sk 1
       r <- quantile sk 0.5      
       r `shouldBe` 1.0
 
@@ -133,11 +133,11 @@ asIO = id
 mergeSpec :: Spec
 mergeSpec = specify "merge works" $ asIO $ do
   s1 <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
-  mapM_ (update s1) [0..40]
+  mapM_ (insert s1) [0..40]
   s2 <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
-  mapM_ (update s2) [0..40]
+  mapM_ (insert s2) [0..40]
   s3 <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
-  mapM_ (update s3) [0..40]
+  mapM_ (insert s3) [0..40]
   s <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
   s `merge` s1
   s `merge` s2
@@ -148,7 +148,7 @@ loadSketch :: forall n. (KnownNat n, ValidK n) => Proxy n -> Int -> Int -> RankA
 loadSketch k min_ max_ hra ltEq up = do
   sk <- mkReqSketch hra :: IO (ReqSketch n (PrimState IO))
   -- This just seems geared at making sure that ranks come out right regardless of order
-  mapM_ (update sk . fromIntegral) $ if up
+  mapM_ (insert sk . fromIntegral) $ if up
     then [min_ .. max_]
     else reverse [min_ .. max_ {- + 1 -}]
   pure sk

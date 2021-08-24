@@ -24,22 +24,23 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveGeneric #-}
-module DataSketches.Quantiles.RelativeErrorQuantile
-  ( ReqSketch (..)
+module DataSketches.Quantiles.RelativeErrorQuantile ( 
+  -- * Construction
+    ReqSketch (criterion) 
   , ValidK
   , mkReqSketch
-  , getN
-  , getSum
-  , getCompactors
-  , getNumLevels
-  , getRetainedItems
-  , computeTotalRetainedItems
-  , cumulativeDistributionFunction
+  -- ** Configuration settings
   , RankAccuracy(..)
-  , rankAccuracy
-  , relativeStandardError
-  , maximum
+  , Criterion(..)
+  -- * Sketch summaries
   , count
+  , null
+  , sum
+  , maximum
+  , minimum
+  , retainedItemCount
+  , relativeStandardError
+  , countWithCriterion
   , probabilityMassFunction
   , quantile
   , quantiles
@@ -47,14 +48,18 @@ module DataSketches.Quantiles.RelativeErrorQuantile
   , rankLowerBound
   , ranks
   , rankUpperBound
-  , null
+  , cumulativeDistributionFunction
+  -- * Updating the sketch
+  , merge
+  , insert
+  , rankAccuracy
   , isEstimationMode
   , isLessThanOrEqual
-  , merge
-  , update
+  -- * Internals used in test. DO NOT USE.
+  -- | If you see this error, please file an issue in the GitHub repository.
   , CumulativeDistributionInvariants(..)
-  -- Test only?
   , mkAuxiliaryFromReqSketch
+  , computeTotalRetainedItems
   ) where
 
 import Control.DeepSeq
@@ -76,7 +81,6 @@ import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
 import GHC.TypeLits
-import Prelude hiding (null, minimum, maximum)
 import Data.Maybe (isNothing)
 import qualified Data.Foldable
 import qualified Data.List
@@ -85,7 +89,41 @@ import Control.Exception (throw, assert)
 import GHC.Generics
 import System.Random.MWC (Gen, create)
 import qualified Data.Vector.Generic.Mutable as MG
+import Prelude hiding (sum, minimum, maximum, null)
+{- |
+This Relative Error Quantiles Sketch is the Haskell implementation based on the paper
+"Relative Error Streaming Quantiles", https://arxiv.org/abs/2004.01668, and loosely derived from
+a Python prototype written by Pavel Vesely, ported from the Java equivalent.
 
+This implementation differs from the algorithm described in the paper in the following:
+
+The algorithm requires no upper bound on the stream length.
+Instead, each relative-compactor counts the number of compaction operations performed
+so far (via variable state). Initially, the relative-compactor starts with INIT_NUMBER_OF_SECTIONS.
+Each time the number of compactions (variable state) exceeds 2^{numSections - 1}, we double
+numSections. Note that after merging the sketch with another one variable state may not correspond
+to the number of compactions performed at a particular level, however, since the state variable
+never exceeds the number of compactions, the guarantees of the sketch remain valid.
+
+The size of each section (variable k and sectionSize in the code and parameter k in
+the paper) is initialized with a value set by the user via variable k.
+When the number of sections doubles, we decrease sectionSize by a factor of sqrt(2).
+This is applied at each level separately. Thus, when we double the number of sections, the
+nominal compactor size increases by a factor of approx. sqrt(2) (+/- rounding).
+
+The merge operation here does not perform "special compactions", which are used in the paper
+to allow for a tight mathematical analysis of the sketch.
+
+This implementation provides a number of capabilities not discussed in the paper or provided
+in the Python prototype.
+
+The Python prototype only implemented high accuracy for low ranks. This implementation
+provides the user with the ability to choose either high rank accuracy or low rank accuracy at
+the time of sketch construction.
+
+- The Python prototype only implemented a comparison criterion of "<". This implementation
+allows the user to switch back and forth between the "<=" criterion and the "<=" criterion.
+-}
 data ReqSketch (k :: Nat) s = ReqSketch
   { rankAccuracySetting :: !RankAccuracy
   , criterion :: !Criterion
@@ -125,6 +163,8 @@ instance TakeSnapshot (ReqSketch k) where
 
 deriving instance Show (Snapshot (ReqSketch k))
 
+-- | The K parameter can be increased to trade increased space efficiency for higher accuracy in rank and quantile
+-- calculations. Due to the way the compaction algorithm works, it must be an even number between 4 and 1024.
 type ValidK k = (4 <= k, k <= 1024, (k `Mod` 2) ~ 0)
 
 mkReqSketch :: forall k m. (PrimMonad m, ValidK k, KnownNat k) => RankAccuracy -> m (ReqSketch k (PrimState m))
@@ -144,8 +184,8 @@ mkReqSketch rank = do
 
 mkAuxiliaryFromReqSketch :: PrimMonad m => ReqSketch k (PrimState m) -> m ReqAuxiliary
 mkAuxiliaryFromReqSketch this = do
-  total <- getN this
-  retainedItems <- getRetainedItems this
+  total <- count this
+  retainedItems <- retainedItemCount this
   compactors <- getCompactors this
   Auxiliary.mkAuxiliary (rankAccuracySetting this) total retainedItems compactors
 
@@ -161,14 +201,11 @@ getNumLevels = fmap Vector.length . getCompactors
 getIsEmpty :: PrimMonad m => ReqSketch k (PrimState m) -> m Bool
 getIsEmpty = fmap (== 0) . readURef . totalN
 
-getN :: PrimMonad m => ReqSketch k (PrimState m) -> m Word64
-getN = readURef . totalN
-
 getK :: forall k s. KnownNat k => ReqSketch k s -> Word32
 getK _ = fromIntegral (natVal (Proxy :: Proxy k))
 
-getRetainedItems :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
-getRetainedItems = readURef . retainedItems
+retainedItemCount :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
+retainedItemCount = readURef . retainedItems
 
 getMaxNominalCapacity :: PrimMonad m => ReqSketch k (PrimState m) -> m Int
 getMaxNominalCapacity = readURef . maxNominalCapacitiesSize
@@ -215,7 +252,7 @@ getPMForCDF this splits = do
   let numSplits = length splits
       numBuckets = numSplits -- + 1
   splitCounts <- getCounts this splits
-  n <- getN this
+  n <- count this
   pure $ (++ [n]) $ take numBuckets splitCounts
 
 -- | Returns an approximation to the Cumulative Distribution Function (CDF), which is the cumulative analog of the PMF, 
@@ -240,7 +277,7 @@ cumulativeDistributionFunction this splitPoints = do
     then pure Nothing
     else do
       let numBuckets = length splitPoints + 1
-      n <- getN this
+      n <- count this
       pure $ Just $ (/ fromIntegral n) . fromIntegral <$> buckets
 
 rankAccuracy :: ReqSketch s k -> RankAccuracy
@@ -268,8 +305,13 @@ minimum = readURef . minValue
 maximum :: PrimMonad m => ReqSketch k (PrimState m) -> m Double
 maximum = readURef . maxValue
 
-count :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> Double -> m Word64
-count s value = fromIntegral <$> do
+-- | Get the total number of items inserted into the sketch
+count :: PrimMonad m => ReqSketch k (PrimState m) -> m Word64
+count = readURef . totalN
+
+-- | Returns the approximate count of items satisfying the criterion set in the ReqSketch 'criterion' field.
+countWithCriterion :: (PrimMonad m, s ~ PrimState m, KnownNat k) => ReqSketch k s -> Double -> m Word64
+countWithCriterion s value = fromIntegral <$> do
   empty <- null s
   if empty
     then pure 0
@@ -282,8 +324,8 @@ count s value = fromIntegral <$> do
             pure (accum + (fromIntegral count_ * wt))
       Vector.foldM go 0 compactors
 
-getSum :: (PrimMonad m) => ReqSketch k (PrimState m) -> m Double
-getSum = readURef . sumValue
+sum :: (PrimMonad m) => ReqSketch k (PrimState m) -> m Double
+sum = readURef . sumValue
 
 -- | Returns an approximation to the Probability Mass Function (PMF) of the input stream given a set of splitPoints (values).
 -- The resulting approximations have a probabilistic guarantee that be obtained, a priori, from the getRSE(int, double, boolean, long) function.
@@ -311,7 +353,7 @@ probabilityMassFunction this splitPoints = do
      else do
        let numBuckets = length splitPoints + 1
        buckets <- fmap fromIntegral <$> getPMForCDF this splitPoints
-       total <- fromIntegral <$> getN this
+       total <- fromIntegral <$> count this
        let computeProb (0, bucket) = bucket / total
            computeProb (i, bucket) = (prevBucket + bucket) / total
              where prevBucket = buckets !! i - 1
@@ -335,8 +377,8 @@ quantile this normRank = do
          error $ "Normalized rank must be in the range [0.0, 1.0]: " ++ show normRank
        currAuxiliary <- getAux this
        when (isNothing currAuxiliary) $ do
-         total <- getN this
-         retainedItems <- getRetainedItems this
+         total <- count this
+         retainedItems <- retainedItemCount this
          compactors <- getCompactors this
          newAuxiliary <- Auxiliary.mkAuxiliary (rankAccuracySetting this) total retainedItems compactors
          writeMutVar (aux this) (Just newAuxiliary)
@@ -371,7 +413,7 @@ rank s value = do
   if isEmpty
     then pure (0 / 0) -- NaN
     else do
-      nnCount <- count s value
+      nnCount <- countWithCriterion s value
       total <- readURef $ totalN s
       pure (fromIntegral nnCount / fromIntegral total)
 
@@ -391,7 +433,7 @@ rankLowerBound
 rankLowerBound this rank numStdDev = do
   numLevels <- getNumLevels this
   let k = fromIntegral $ getK this
-  total <- getN this
+  total <- count this
   pure $ getRankLB k numLevels rank numStdDev (rankAccuracySetting this == HighRanksAreAccurate) total
 
 -- | Gets an array of normalized ranks that correspond to the given array of values.
@@ -412,7 +454,7 @@ rankUpperBound
 rankUpperBound this rank numStdDev= do
   numLevels <- getNumLevels this
   let k = fromIntegral $ getK this
-  total <- getN this
+  total <- count this
   pure $ getRankUB k numLevels rank numStdDev (rankAccuracySetting this == HighRanksAreAccurate) total
 
 -- | Returns true if this sketch is empty.
@@ -492,7 +534,7 @@ merge this other = do
     when (rankAccuracy /= otherRankAccuracy) $
       error "Both sketches must have the same HighRankAccuracy setting."
     -- update total
-    otherN <- getN other
+    otherN <- count other
     modifyURef (totalN this) (+ otherN)
     -- update the min and max values
     thisMin <- minimum this
@@ -530,8 +572,8 @@ merge this other = do
         grow this
 
 -- | Updates this sketch with the given item.
-update :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> Double -> m ()
-update this item = do
+insert :: (PrimMonad m, KnownNat k) => ReqSketch k (PrimState m) -> Double -> m ()
+insert this item = do
   unless (isNaN item) $ do
     isEmpty <- getIsEmpty this
     if isEmpty
@@ -549,7 +591,7 @@ update this item = do
     modifyURef (retainedItems this) (+1)
     modifyURef (totalN this) (+1)
     modifyURef (sumValue this) (+ item)
-    retItems <- getRetainedItems this
+    retItems <- retainedItemCount this
     maxNominalCapacity <- getMaxNominalCapacity this
     when (retItems >= maxNominalCapacity) $ do
       DoubleBuffer.sort buff
