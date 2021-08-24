@@ -1,10 +1,10 @@
 name:                data-sketches
-version:             0.1.0.1
+version:             0.1.0.2
 github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
 maintainer:          "ian@iankduncan.com"
-copyright:           "2021 Ian Duncan, Rob Bassi, Mercury Bank"
+copyright:           "2021 Ian Duncan, Rob Bassi, Mercury Technologies"
 
 default-extensions:
 - BangPatterns

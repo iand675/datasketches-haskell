@@ -5,13 +5,13 @@ cabal-version: 1.18
 -- see: https://github.com/sol/hpack
 
 name:           data-sketches
-version:        0.1.0.1
+version:        0.1.0.2
 description:    Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
 homepage:       https://github.com/iand675/datasketches-haskell#readme
 bug-reports:    https://github.com/iand675/datasketches-haskell/issues
 author:         Ian Duncan, Rob Bassi
 maintainer:     ian@iankduncan.com
-copyright:      2021 Ian Duncan, Rob Bassi, Mercury Bank
+copyright:      2021 Ian Duncan, Rob Bassi, Mercury Technologies
 license:        Apache
 license-file:   LICENSE
 build-type:     Simple
