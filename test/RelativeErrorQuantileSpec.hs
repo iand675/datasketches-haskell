@@ -11,8 +11,7 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
 import Data.List hiding (insert)
 import Data.Maybe (fromJust, isJust)
-import Data.Proxy
-import GHC.TypeLits
+import Data.Word
 import Test.Hspec
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer (DoubleIsNonFiniteException(..))
 import Text.Show.Pretty
@@ -20,23 +19,23 @@ import Text.Show.Pretty
 spec :: Spec
 spec = do
   specify "non finite PMF/CDF should throw" $ asIO $ do
-    sk <- mkReqSketch @6 HighRanksAreAccurate
+    sk <- mkReqSketch 6 HighRanksAreAccurate
     insert sk 1
     cumulativeDistributionFunction sk [0 / 0] `shouldThrow` (== CumulativeDistributionInvariantsSplitsAreNotFinite)
   specify "updating a sketch with NaN should ignore it" $ asIO $ do
-    sk <- mkReqSketch @6 HighRanksAreAccurate
+    sk <- mkReqSketch 6 HighRanksAreAccurate
     insert sk (0 / 0)
     isEmpty <- DataSketches.Quantiles.RelativeErrorQuantile.null sk
     isEmpty `shouldBe` True
   specify "non finite rank should throw" $ asIO $ do
     let infinity = read "Infinity"::Double
-    sk <- mkReqSketch @6 HighRanksAreAccurate
+    sk <- mkReqSketch 6 HighRanksAreAccurate
     insert sk 1
     (rank sk infinity >>= print) `shouldThrow` (\(DoubleIsNonFiniteException _) -> True)
   specify "big merge doesn't explode" $ asIO $ do
-    sk1 <- mkReqSketch @6 HighRanksAreAccurate
+    sk1 <- mkReqSketch 6 HighRanksAreAccurate
     mapM_ (insert sk1) [5..10]
-    sk2 <- mkReqSketch @6 HighRanksAreAccurate
+    sk2 <- mkReqSketch 6 HighRanksAreAccurate
     merge sk1 sk2
     mapM_ (insert sk2) [1..15]
     merge sk1 sk2
@@ -54,11 +53,11 @@ spec = do
   let lessThanRs = [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.6, 0.7, 0.7, 0.7]
   let lessThanEqRs = [0.3, 0.3, 0.3, 0.6, 0.6, 0.6, 0.7, 1.0, 1.0, 1.0]
   let simpleTestSetup = do
-        sk <- mkReqSketch @50 HighRanksAreAccurate
+        sk <- mkReqSketch 50 HighRanksAreAccurate
         mapM_ (insert sk) simpleTestValues
         pure sk
   specify "lots of repeat values should work" $ asIO $ do
-    sk <- mkReqSketch @6 HighRanksAreAccurate
+    sk <- mkReqSketch 6 HighRanksAreAccurate
     replicateM_ 10_000 (insert sk 1 >> retainedItemCount sk)
     print =<< retainedItemCount sk
 
@@ -71,7 +70,7 @@ spec = do
         actualRanks <- mapM (rank sk) simpleTestValues
         actualRanks `shouldBe` lessThanRs
     describe "<=" $ do
-      let mkSk' sk = sk { criterion = (:<=) } :: ReqSketch 50 (PrimState IO)
+      let mkSk' sk = sk { criterion = (:<=) } :: ReqSketch (PrimState IO)
       specify "ranks function should match lessThanRs" $ \sk -> do
         let sk' = mkSk' sk
         actualRanks <- ranks sk' simpleTestValues
@@ -87,17 +86,17 @@ spec = do
 
 
 
-  --      k     min max hra                  lteq  low-to-high or high-to-low
-  bigTest Proxy 1   200 HighRanksAreAccurate (:<=) True
-  bigTest Proxy 1   200 LowRanksAreAccurate  (:<=) True
-  bigTest Proxy 1   200 HighRanksAreAccurate (:<)  False
-  bigTest Proxy 1   200 LowRanksAreAccurate  (:<)  True
+  --      k min max hra                  lteq  low-to-high or high-to-low
+  bigTest 6 1   200 HighRanksAreAccurate (:<=) True
+  bigTest 6 1   200 LowRanksAreAccurate  (:<=) True
+  bigTest 6 1   200 HighRanksAreAccurate (:<)  False
+  bigTest 6 1   200 LowRanksAreAccurate  (:<)  True
 
   mergeSpec
 
   describe "quantiles" $ do
     it "should be reasonable" $ asIO $ do
-      sk <- mkReqSketch @6 HighRanksAreAccurate
+      sk <- mkReqSketch 6 HighRanksAreAccurate
       insert sk 1
       insert sk 1
       insert sk 1
@@ -105,10 +104,10 @@ spec = do
       r `shouldBe` 1.0
 
 
-bigTest :: Proxy 6 -> Int -> Int -> RankAccuracy -> Criterion -> Bool -> Spec
+bigTest :: Word32 -> Int -> Int -> RankAccuracy -> Criterion -> Bool -> Spec
 bigTest k min_ max_ hra crit up = do
   let testName = unwords
-        [ "k=" <> show (natVal k)
+        [ "k=" <> show k
         , "min=" <> show min_
         , "max=" <> show max_
         , "hra=" <> show hra
@@ -132,28 +131,28 @@ asIO = id
 
 mergeSpec :: Spec
 mergeSpec = specify "merge works" $ asIO $ do
-  s1 <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
+  s1 <- mkReqSketch 6 HighRanksAreAccurate :: IO (ReqSketch (PrimState IO))
   mapM_ (insert s1) [0..40]
-  s2 <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
+  s2 <- mkReqSketch 6 HighRanksAreAccurate :: IO (ReqSketch (PrimState IO))
   mapM_ (insert s2) [0..40]
-  s3 <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
+  s3 <- mkReqSketch 6 HighRanksAreAccurate :: IO (ReqSketch (PrimState IO))
   mapM_ (insert s3) [0..40]
-  s <- mkReqSketch HighRanksAreAccurate :: IO (ReqSketch 12 (PrimState IO))
+  s <- mkReqSketch 6 HighRanksAreAccurate :: IO (ReqSketch (PrimState IO))
   s `merge` s1
   s `merge` s2
   s `merge` s3
   pure ()
 
-loadSketch :: forall n. (KnownNat n, ValidK n) => Proxy n -> Int -> Int -> RankAccuracy -> Criterion -> Bool -> IO (ReqSketch n (PrimState IO))
+loadSketch :: Word32 -> Int -> Int -> RankAccuracy -> Criterion -> Bool -> IO (ReqSketch (PrimState IO))
 loadSketch k min_ max_ hra ltEq up = do
-  sk <- mkReqSketch hra :: IO (ReqSketch n (PrimState IO))
+  sk <- mkReqSketch k hra :: IO (ReqSketch (PrimState IO))
   -- This just seems geared at making sure that ranks come out right regardless of order
   mapM_ (insert sk . fromIntegral) $ if up
     then [min_ .. max_]
     else reverse [min_ .. max_ {- + 1 -}]
   pure sk
 
-checkAux :: ReqSketch n (PrimState IO) -> IO ()
+checkAux :: ReqSketch (PrimState IO) -> IO ()
 checkAux sk = do
   auxiliary <- mkAuxiliaryFromReqSketch sk
   totalCount <- computeTotalRetainedItems sk
@@ -171,7 +170,7 @@ checkAux sk = do
     initialRow
     otherRows
 
-checkGetRank :: KnownNat n => ReqSketch n (PrimState IO) -> Int -> Int -> IO ()
+checkGetRank :: ReqSketch (PrimState IO) -> Int -> Int -> IO ()
 checkGetRank sk min_ max_ = do
   let (v : spArr) = evenlySpacedFloats 0 (fromIntegral max_) 11
   initialRank <- rank sk v
@@ -185,18 +184,18 @@ checkGetRank sk min_ max_ = do
     (v, initialRank)
     spArr
 
-checkGetRanks :: KnownNat n => ReqSketch n (PrimState IO) -> Int -> IO ()
+checkGetRanks :: ReqSketch (PrimState IO) -> Int -> IO ()
 checkGetRanks sk max_ = do
   let sp = evenlySpacedFloats 0 (fromIntegral max_) 11
   void $ ranks sk sp
 
-checkGetCDF :: KnownNat n => ReqSketch n (PrimState IO) -> IO ()
+checkGetCDF :: ReqSketch (PrimState IO) -> IO ()
 checkGetCDF sk = do
   let spArr = [20, 40 .. 180]
   r <- cumulativeDistributionFunction sk spArr
   r `shouldSatisfy` isJust
 
-checkGetPMF :: KnownNat n => ReqSketch n (PrimState IO) -> IO ()
+checkGetPMF :: ReqSketch (PrimState IO) -> IO ()
 checkGetPMF sk = do
   let spArr = [20, 40 .. 180]
   r <- probabilityMassFunction sk spArr
@@ -210,7 +209,7 @@ checkMerge sk = do
 
 checkGetRankConcreteExample :: RankAccuracy -> Criterion -> IO ()
 checkGetRankConcreteExample ra crit = do
-  sk <- loadSketch (Proxy :: Proxy 12) 1 1000 ra crit True
+  sk <- loadSketch 12 1 1000 ra crit True
   rLB <- rankLowerBound sk 0.5 1
   rLB `shouldSatisfy` (> 0)
   rLB <- case ra of
@@ -230,8 +229,7 @@ checkGetRankConcreteExample ra crit = do
 
 
 checkGetQuantiles
-  :: KnownNat n
-  => ReqSketch n (PrimState IO)
+  :: ReqSketch (PrimState IO)
   -> IO ()
 checkGetQuantiles sk = do
   let rArr = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]

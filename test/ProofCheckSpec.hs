@@ -9,7 +9,6 @@ import qualified DataSketches.Quantiles.RelativeErrorQuantile as SK
 import Test.QuickCheck
 import Control.Monad.ST
 import Control.Monad.Primitive
-import GHC.TypeLits
 import Control.Monad
 import Debug.Trace
 
@@ -21,7 +20,7 @@ compareRealToApproximate :: IO ()
 compareRealToApproximate = do
   let realQuantiles = quantiles spss [50, 90, 95, 99] 100 sampleData
   -- print realQuantiles
-  sk <- mkReqSketch @6 HighRanksAreAccurate
+  sk <- mkReqSketch 6 HighRanksAreAccurate
   mapM_ (update sk) sampleData
   let ranks = [0.01, 0.02 .. 0.99]
       rankInts = map (floor . (* 100)) ranks
@@ -32,7 +31,7 @@ compareRealToApproximate = do
     assert (actual >= l && actual <= u)
 -}
 
-upperAndLowerBound :: (PrimMonad m, KnownNat k) => SK.ReqSketch k (Control.Monad.Primitive.PrimState m)
+upperAndLowerBound :: (PrimMonad m) => SK.ReqSketch (Control.Monad.Primitive.PrimState m)
   -> Double -> m (Double, Double, Double)
 upperAndLowerBound sk r = do
   l <- SK.rankLowerBound sk r 3
@@ -46,7 +45,7 @@ spec = do
   specify "quantile ranks should fall within advertised upper and lower bounds" $
     property $ forAll sampleInputGen $ \(NonEmpty doubles) -> runST $ do
       let sampleData = V.fromList doubles
-      sk <- mkReqSketch @6 HighRanksAreAccurate
+      sk <- mkReqSketch 6 HighRanksAreAccurate
       mapM_ (insert sk) sampleData
       let ranks = [0.01, 0.02 .. 0.99]
           rankInts = map (floor . (* 100)) ranks
@@ -59,7 +58,7 @@ spec = do
   specify "values at quantiles should be close to real quantile" $
     property $ forAll sampleInputGen $ \(NonEmpty doubles) -> runST $ do
       let sampleData = V.fromList doubles
-      sk <- mkReqSketch @6 HighRanksAreAccurate
+      sk <- mkReqSketch 6 HighRanksAreAccurate
       mapM_ (update sk) sampleData
       let ranks = [0.01, 0.02 .. 0.99]
           rankInts = map (floor . (* 100)) ranks
