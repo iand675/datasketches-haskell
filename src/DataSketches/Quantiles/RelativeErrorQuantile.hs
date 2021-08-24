@@ -24,9 +24,9 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveGeneric #-}
-module DataSketches.Quantiles.RelativeErrorQuantile ( 
+module DataSketches.Quantiles.RelativeErrorQuantile (
   -- * Construction
-    ReqSketch (criterion) 
+    ReqSketch (criterion)
   , ValidK
   , mkReqSketch
   -- ** Configuration settings
@@ -285,17 +285,20 @@ rankAccuracy = rankAccuracySetting
 
 -- | Returns an a priori estimate of relative standard error (RSE, expressed as a number in [0,1]). Derived from Lemma 12 in https://arxiv.org/abs/2004.01668v2, but the constant factors were modified based on empirical measurements.
 relativeStandardError
-  :: ReqSketch s k
-  -> Int
+  :: Int
   -- ^ k - the given value of k
   -> Double
   -- ^ rank - the given normalized rank, a number in [0,1].
   -> RankAccuracy
-  -> Int
+  -> Word64
   -- ^ totalN - an estimate of the total number of items submitted to the sketch.
   -> Double
   -- ^ an a priori estimate of relative standard error (RSE, expressed as a number in [0,1]).
-relativeStandardError = undefined
+relativeStandardError k rank_ hra = getRankUB k 2 rank_ 1 isHra
+  where
+    isHra = case hra of
+      HighRanksAreAccurate -> True
+      _ -> False
 
 -- | Gets the smallest value seen by this sketch
 minimum :: PrimMonad m => ReqSketch k (PrimState m) -> m Double
@@ -517,7 +520,7 @@ compress this = do
           DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
           modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
           modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
-  imapM_ compressionStep compactors 
+  imapM_ compressionStep compactors
   writeMutVar (aux this) Nothing
 
 -- | Merge other sketch into this one.
@@ -562,7 +565,7 @@ merge this other = do
       compress this
     maxNominalCapacity' <- readURef $ maxNominalCapacitiesSize this
     totalRetainedItems' <- readURef $ retainedItems this
-    assert (totalRetainedItems' < maxNominalCapacity') $ 
+    assert (totalRetainedItems' < maxNominalCapacity') $
       writeMutVar (aux this) Nothing
   pure this
   where
@@ -626,6 +629,3 @@ exactRank k levels rank hra totalN = (levels == 1 || fromIntegral totalN <= base
     baseCap = k * initNumberOfSections
     exactRankThresh :: Double
     exactRankThresh = fromIntegral baseCap / fromIntegral totalN
-
-getRSE :: Int -> Double -> Bool -> Word64 -> Double
-getRSE k rank hra totalN = getRankUB k 2 rank 1 hra totalN
