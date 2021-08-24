@@ -23,17 +23,17 @@ main = do
   defaultMain
     [ bgroup "ReqSketch"
       [ bench "insert/1" $ perRunEnv (mkReqSketch 6 HighRanksAreAccurate) $ \sk -> do
-          update sk 1
+          insert sk 1
       , bench "insert/10" $ perRunEnv (mkReqSketch 6 HighRanksAreAccurate) $ \sk -> do
-          mapM_ (update sk) [1..10]
+          mapM_ (insert sk) [1..10]
       , bench "insert/100" $ perRunEnv (mkReqSketch 6 HighRanksAreAccurate) $ \sk -> do
-          mapM_ (update sk) [1..100]
+          mapM_ (insert sk) [1..100]
       , bench "insert/1000" $ perRunEnv (mkReqSketch 6 HighRanksAreAccurate) $ \sk -> do
-          mapM_ (update sk) [1..1000]
+          mapM_ (insert sk) [1..1000]
       , bench "insert/10000" $ perRunEnv (mkReqSketch 6 HighRanksAreAccurate) $ \sk -> do
-          mapM_ (update sk) [1..10000]
-      , bench "insert/existing" $ whnfIO $ update outerSketch 1
-      , bench "insert/mvar" $ whnfIO $ withMVar skM (`update` 1)
+          mapM_ (insert sk) [1..10000]
+      , bench "insert/existing" $ whnfIO $ insert outerSketch 1
+      , bench "insert/mvar" $ whnfIO $ withMVar skM (`insert` 1)
       ]
     , bgroup "DoubleBuffer"
       [ -- bench "sort" $ 
