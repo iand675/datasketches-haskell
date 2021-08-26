@@ -9,15 +9,14 @@ import Test.HSpec.JUnit
 import Test.Hspec.Runner
 
 main :: IO ()
-main = do
-  isCI <- lookupEnv "CI"
-  args <- getArgs
+main = 
+      getArgs
   >>= readConfig config
   >>= withArgs [] . runSpec specs
   >>= evaluateSummary
   where
     config = defaultConfig 
-      { configFormat = junitFormat "test-results.xml" "data-sketches" 
+      { configFormat = Just $ junitFormat "test-results.xml" "data-sketches" 
       }
     specs = do
       describe "Auxiliary" AuxiliarySpec.spec
