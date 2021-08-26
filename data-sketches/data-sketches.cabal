@@ -81,6 +81,7 @@ test-suite data-sketches-test
     , data-sketches-core ==0.1.*
     , ghc-prim
     , hspec
+    , hspec-junit-formatter
     , mtl
     , mwc-random
     , pretty-show

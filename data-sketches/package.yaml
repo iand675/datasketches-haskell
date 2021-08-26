@@ -57,6 +57,7 @@ tests:
     dependencies:
     - data-sketches
     - hspec
+    - hspec-junit-formatter
     # - hspec-discover
     - QuickCheck
     - statistics
