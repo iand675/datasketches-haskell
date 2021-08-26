@@ -2,7 +2,7 @@
 
 [![Build status](https://badge.buildkite.com/7b2af8b4b0c08a5db141959addf751380574ac8079a7d8cd00.svg)](https://buildkite.com/iand675/datasketches)
 [![data-sketches on stackage](https://stackage.org/package/packagename/badge/nightly)](https://stackage.org/nightly/package/data-sketches)
-[![data-sketches on hackage]](https://img.shields.io/hackage/v/data-sketches)
+[![data-sketches on hackage](https://img.shields.io/hackage/v/data-sketches)](https://hackage.haskell.org/package/data-sketches)
 
 A port of subsets of the [Apache DataSketches](https://datasketches.apache.org/) library.
 
