@@ -27,20 +27,21 @@ module DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
   ) where
 
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import Control.Monad
-import Control.Monad.Primitive
-import Control.Monad.Reader.Class
+    ( Criterion )
+import Control.Monad ( unless, when )
+import Control.Monad.Primitive ( PrimMonad(PrimState) )
 import Data.Primitive.MutVar
+    ( newMutVar, readMutVar, writeMutVar, MutVar )
 import qualified Data.Vector.Unboxed as UVector
 import qualified Data.Vector.Unboxed.Mutable as MUVector
-import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
+import DataSketches.Core.Internal.URef
+    ( URef, newURef, readURef, writeURef, modifyURef )
 import Data.Vector.Algorithms.Intro (sortByBounds)
-import Data.Vector.Algorithms.Search
-import GHC.Prim
-import GHC.Stack
+import GHC.Stack ( HasCallStack )
 import System.IO.Unsafe ()
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch as IS
-import Control.Exception
+import Control.Exception ( Exception, throw )
+import DataSketches.Core.Snapshot ( TakeSnapshot(..) )
 
 -- | A special buffer of floats specifically designed to support the ReqCompactor class.
 data DoubleBuffer s = DoubleBuffer
@@ -51,22 +52,23 @@ data DoubleBuffer s = DoubleBuffer
   , spaceAtBottom :: !Bool
   }
 
-instance TakeSnapshot DoubleBuffer where
-  data Snapshot DoubleBuffer = DoubleBufferSnapshot
+data DoubleBufferSnapshot = DoubleBufferSnapshot
     { dbSnapshotVec :: UVector.Vector Double
     , dbSnapshotCount :: !Int
     , dbSnapshotSorted :: !Bool
     , dbSnapshotGrowthIncrement :: !Int
     , dbSnapshotSpaceAtBottom :: !Bool
-    }
+    } deriving (Show)
+
+instance TakeSnapshot DoubleBuffer where
+  type Snapshot DoubleBuffer = DoubleBufferSnapshot
+
   takeSnapshot DoubleBuffer{..} = DoubleBufferSnapshot
     <$> (readMutVar vec >>= UVector.freeze)
     <*> readURef count
     <*> readURef sorted
     <*> pure growthIncrement
     <*> pure spaceAtBottom
-
-deriving instance Show (Snapshot DoubleBuffer)
 
 type Capacity = Int
 type GrowthIncrement = Int

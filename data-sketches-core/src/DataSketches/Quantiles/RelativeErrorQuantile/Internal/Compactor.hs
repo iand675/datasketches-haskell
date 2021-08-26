@@ -22,11 +22,11 @@ import DataSketches.Quantiles.RelativeErrorQuantile.Types
 import System.Random.MWC (create, Variate(uniform), Gen)
 import Control.Exception (assert)
 import Control.Monad (when)
-import Control.Monad.Trans
 import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
-import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
+import DataSketches.Core.Internal.URef
+import DataSketches.Core.Snapshot
 
 data CompactorReturn s = CompactorReturn
   { crDeltaRetItems :: {-# UNPACK #-} !Int
@@ -48,8 +48,7 @@ data ReqCompactor s = ReqCompactor
   , rcBuffer :: {-# UNPACK #-} !(MutVar s (DoubleBuffer s))
   }
 
-instance TakeSnapshot ReqCompactor where
-  data Snapshot ReqCompactor = ReqCompactorSnapshot
+data ReqCompactorSnapshot = ReqCompactorSnapshot
     { snapshotCompactorRankAccuracy :: !RankAccuracy
     , snapshotCompactorRankAccuracyState :: !Word64
     , snapshotCompactorLastFlip :: !Bool
@@ -57,7 +56,10 @@ instance TakeSnapshot ReqCompactor where
     , snapshotCompactorSectionSize :: !Word32
     , snapshotCompactorNumSections :: !Word8
     , snapshotCompactorBuffer :: !(Snapshot DoubleBuffer)
-    }
+    } deriving (Show)
+
+instance TakeSnapshot ReqCompactor where
+  type Snapshot ReqCompactor = ReqCompactorSnapshot
   takeSnapshot ReqCompactor{..} = ReqCompactorSnapshot rcRankAccuracy
     <$> readURef rcState
     <*> readURef rcLastFlip
@@ -66,7 +68,6 @@ instance TakeSnapshot ReqCompactor where
     <*> readURef rcNumSections
     <*> (readMutVar rcBuffer >>= takeSnapshot)
 
-deriving instance Show (Snapshot ReqCompactor)
 
 mkReqCompactor
   :: PrimMonad m

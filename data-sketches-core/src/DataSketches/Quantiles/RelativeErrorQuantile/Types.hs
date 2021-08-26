@@ -23,7 +23,3 @@ data RankAccuracy
   | LowRanksAreAccurate
   -- ^ Low ranks are prioritized for better accuracy
   deriving (Show, Eq)
-
-class TakeSnapshot a where
-  data Snapshot a
-  takeSnapshot :: PrimMonad m => a (PrimState m) -> m (Snapshot a)

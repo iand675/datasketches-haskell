@@ -1,0 +1,78 @@
+name:                data-sketches
+version:             0.3.1.0
+github:              "iand675/datasketches-haskell"
+license:             Apache
+author:              "Ian Duncan, Rob Bassi"
+maintainer:          "ian@iankduncan.com"
+copyright:           "2021 Ian Duncan, Rob Bassi, Mercury Technologies"
+
+default-extensions:
+- BangPatterns
+- FlexibleInstances
+- RecordWildCards
+- ScopedTypeVariables
+- StandaloneDeriving
+- TypeFamilies
+- TypeOperators
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+extra-doc-files:
+- docs/images/KllErrorK100SL11.png
+- docs/images/ReqErrorHraK12SL11_LT.png
+- docs/images/ReqErrorLraK12SL11_LE.png
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- vector
+- mwc-random
+- mtl
+- primitive
+- vector-algorithms
+- ghc-prim
+- data-sketches-core == 0.1.*
+
+library:
+  source-dirs: src
+
+tests:
+  data-sketches-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - data-sketches
+    - hspec
+    # - hspec-discover
+    - QuickCheck
+    - statistics
+    - pretty-show
+    # build-tool-depends:
+    # - hspec-discover:hspec-discover
+
+benchmarks:
+  bench:
+    main: Bench.hs
+    source-dirs: bench
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - criterion
+    - data-sketches
+    # - prometheus-client

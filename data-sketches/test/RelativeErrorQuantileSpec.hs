@@ -8,6 +8,7 @@ import Control.Monad
 import Control.Monad.Primitive
 import DataSketches.Quantiles.RelativeErrorQuantile
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
 import Data.List hiding (insert)
 import Data.Maybe (fromJust, isJust)

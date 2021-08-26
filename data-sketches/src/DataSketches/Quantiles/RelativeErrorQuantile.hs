@@ -55,114 +55,44 @@ module DataSketches.Quantiles.RelativeErrorQuantile (
   , rankAccuracy
   , isEstimationMode
   , isLessThanOrEqual
-  -- * Internals used in test. DO NOT USE.
   -- | If you see this error, please file an issue in the GitHub repository.
   , CumulativeDistributionInvariants(..)
-  , mkAuxiliaryFromReqSketch
-  , computeTotalRetainedItems
   ) where
 
-import Control.DeepSeq
 import Control.Monad (when, unless, foldM, foldM_)
-import Control.Monad.Primitive
-import Control.Monad.Trans
+import Control.Monad.Primitive ( PrimMonad(PrimState) )
 import Data.Bits (shiftL)
 import Data.Vector ((!), imapM_)
 import qualified Data.Vector as Vector
 import Data.Primitive.MutVar
-import Data.Proxy
-import Data.Word
+    ( modifyMutVar', newMutVar, readMutVar, writeMutVar )
+import Data.Word ( Word32, Word64 )
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
+    ( fixRseFactor, initNumberOfSections, relRseFactor )
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
+    ( Criterion(..), RankAccuracy(..) )
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor (ReqCompactor)
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary (ReqAuxiliary)
+import DataSketches.Quantiles.RelativeErrorQuantile.Internal
+    ( count,
+      retainedItemCount,
+      CumulativeDistributionInvariants(..),
+      ReqSketch(..),
+      computeTotalRetainedItems,
+      getCompactors )
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary as Auxiliary
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor as Compactor
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer as DoubleBuffer
-import DataSketches.Quantiles.RelativeErrorQuantile.Internal.URef
-import GHC.TypeLits
+import DataSketches.Core.Internal.URef
+    ( modifyURef, newURef, readURef, writeURef )
 import Data.Maybe (isNothing)
 import qualified Data.Foldable
 import qualified Data.List
 import GHC.Exception.Type (Exception)
 import Control.Exception (throw, assert)
-import GHC.Generics
 import System.Random.MWC (Gen, create)
 import qualified Data.Vector.Generic.Mutable as MG
 import Prelude hiding (sum, minimum, maximum, null)
-{- |
-This Relative Error Quantiles Sketch is the Haskell implementation based on the paper
-"Relative Error Streaming Quantiles", https://arxiv.org/abs/2004.01668, and loosely derived from
-a Python prototype written by Pavel Vesely, ported from the Java equivalent.
-
-This implementation differs from the algorithm described in the paper in the following:
-
-The algorithm requires no upper bound on the stream length.
-Instead, each relative-compactor counts the number of compaction operations performed
-so far (via variable state). Initially, the relative-compactor starts with INIT_NUMBER_OF_SECTIONS.
-Each time the number of compactions (variable state) exceeds 2^{numSections - 1}, we double
-numSections. Note that after merging the sketch with another one variable state may not correspond
-to the number of compactions performed at a particular level, however, since the state variable
-never exceeds the number of compactions, the guarantees of the sketch remain valid.
-
-The size of each section (variable k and sectionSize in the code and parameter k in
-the paper) is initialized with a value set by the user via variable k.
-When the number of sections doubles, we decrease sectionSize by a factor of sqrt(2).
-This is applied at each level separately. Thus, when we double the number of sections, the
-nominal compactor size increases by a factor of approx. sqrt(2) (+/- rounding).
-
-The merge operation here does not perform "special compactions", which are used in the paper
-to allow for a tight mathematical analysis of the sketch.
-
-This implementation provides a number of capabilities not discussed in the paper or provided
-in the Python prototype.
-
-The Python prototype only implemented high accuracy for low ranks. This implementation
-provides the user with the ability to choose either high rank accuracy or low rank accuracy at
-the time of sketch construction.
-
-- The Python prototype only implemented a comparison criterion of "<". This implementation
-allows the user to switch back and forth between the "<=" criterion and the "<=" criterion.
--}
-data ReqSketch s = ReqSketch
-  { k :: !Word32
-  , rankAccuracySetting :: !RankAccuracy
-  , criterion :: !Criterion
-  , sketchRng :: {-# UNPACK #-} !(Gen s)
-  , totalN :: {-# UNPACK #-} !(URef s Word64)
-  , minValue :: {-# UNPACK #-} !(URef s Double)
-  , maxValue :: {-# UNPACK #-} !(URef s Double)
-  , sumValue :: {-# UNPACK #-} !(URef s Double)
-  , retainedItems :: {-# UNPACK #-} !(URef s Int)
-  , maxNominalCapacitiesSize :: {-# UNPACK #-} !(URef s Int)
-  , aux :: {-# UNPACK #-} !(MutVar s (Maybe ReqAuxiliary))
-  , compactors :: {-# UNPACK #-} !(MutVar s (Vector.Vector (ReqCompactor s)))
-  } deriving (Generic)
-
-instance NFData (ReqSketch s) where
-  rnf !rs = ()
-
-instance TakeSnapshot ReqSketch where
-  data Snapshot ReqSketch = ReqSketchSnapshot
-    { snapshotRankAccuracySetting :: !RankAccuracy
-    , snapshotCriterion :: !Criterion
-    , snapshotTotalN :: !Word64
-    , snapshotMinValue :: !Double
-    , snapshotMaxValue :: !Double
-    , snapshotRetainedItems :: !Int
-    , snapshotMaxNominalCapacitiesSize :: !Int
-    -- , aux :: !(MutVar s (Maybe ()))
-    , snapshotCompactors :: !(Vector.Vector (Snapshot ReqCompactor))
-    }
-  takeSnapshot ReqSketch{..} = ReqSketchSnapshot rankAccuracySetting criterion
-    <$> readURef totalN
-    <*> readURef minValue
-    <*> readURef maxValue
-    <*> readURef retainedItems
-    <*> readURef maxNominalCapacitiesSize
-    <*> (readMutVar compactors >>= mapM takeSnapshot)
-
-deriving instance Show (Snapshot ReqSketch)
 
 -- | The K parameter can be increased to trade increased space efficiency for higher accuracy in rank and quantile
 -- calculations. Due to the way the compaction algorithm works, it must be an even number between 4 and 1024.
@@ -187,18 +117,9 @@ mkReqSketch k rank = do
   grow r
   pure r
 
-mkAuxiliaryFromReqSketch :: PrimMonad m => ReqSketch (PrimState m) -> m ReqAuxiliary
-mkAuxiliaryFromReqSketch this = do
-  total <- count this
-  retainedItems <- retainedItemCount this
-  compactors <- getCompactors this
-  Auxiliary.mkAuxiliary (rankAccuracySetting this) total retainedItems compactors
 
 getAux :: PrimMonad m => ReqSketch (PrimState m) -> m (Maybe ReqAuxiliary)
 getAux = readMutVar . aux
-
-getCompactors :: PrimMonad m => ReqSketch (PrimState m) -> m (Vector.Vector (ReqCompactor (PrimState m)))
-getCompactors = readMutVar . compactors
 
 getNumLevels :: PrimMonad m => ReqSketch (PrimState m) -> m Int
 getNumLevels = fmap Vector.length . getCompactors
@@ -209,19 +130,8 @@ getIsEmpty = fmap (== 0) . readURef . totalN
 getK :: ReqSketch s -> Word32
 getK = k
 
-retainedItemCount :: PrimMonad m => ReqSketch (PrimState m) -> m Int
-retainedItemCount = readURef . retainedItems
-
 getMaxNominalCapacity :: PrimMonad m => ReqSketch (PrimState m) -> m Int
 getMaxNominalCapacity = readURef . maxNominalCapacitiesSize
-
-data CumulativeDistributionInvariants
-  = CumulativeDistributionInvariantsSplitsAreEmpty
-  | CumulativeDistributionInvariantsSplitsAreNotFinite
-  | CumulativeDistributionInvariantsSplitsAreNotUniqueAndMontonicallyIncreasing
-  deriving (Show, Eq)
-
-instance Exception CumulativeDistributionInvariants
 
 validateSplits :: Monad m => [Double] -> m ()
 validateSplits splits = do
@@ -312,10 +222,6 @@ minimum = readURef . minValue
 -- | Gets the largest value seen by this sketch
 maximum :: PrimMonad m => ReqSketch (PrimState m) -> m Double
 maximum = readURef . maxValue
-
--- | Get the total number of items inserted into the sketch
-count :: PrimMonad m => ReqSketch (PrimState m) -> m Word64
-count = readURef . totalN
 
 -- | Returns the approximate count of items satisfying the criterion set in the ReqSketch 'criterion' field.
 countWithCriterion :: (PrimMonad m, s ~ PrimState m) => ReqSketch s -> Double -> m Word64
@@ -487,16 +393,6 @@ computeMaxNominalSize this = do
     countNominalCapacity acc compactor = do
       nominalCapacity <- Compactor.getNominalCapacity compactor
       pure $ nominalCapacity + acc
-
-computeTotalRetainedItems :: PrimMonad m => ReqSketch (PrimState m) -> m Int
-computeTotalRetainedItems this = do
-  compactors <- getCompactors this
-  Vector.foldM countBuffer 0 compactors
-  where
-    countBuffer acc compactor = do
-      buff <- Compactor.getBuffer compactor
-      buffSize <- DoubleBuffer.getCount buff
-      pure $ buffSize + acc
 
 grow :: (PrimMonad m) => ReqSketch (PrimState m) -> m ()
 grow this = do
