@@ -1,0 +1,12 @@
+steps:
+  - command: "stack build --test --bench"
+    artifact_paths: data-sketches/test-results.xml
+  - command: "nix-build . --no-out-link"
+    agents:
+      os: "nixos"
+      dev: "true"
+  # - wait: ~
+  #   continue_on_failure: true
+  # - plugins:
+  #     - junit-annotate#v1.9.0:
+  #         artifacts: data-sketches/test-results.xml
