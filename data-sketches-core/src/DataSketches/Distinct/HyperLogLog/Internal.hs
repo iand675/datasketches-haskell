@@ -9,43 +9,30 @@ module DataSketches.Distinct.HyperLogLog.Internal
   ) where
 
 import Control.DeepSeq (NFData(..))
-import Control.Monad (forM_, when)
+import Control.Monad (when, forM_)
 import Control.Monad.Primitive
-import Data.Bits
+import Data.Bits (shiftL, shiftR, (.&.), xor, countTrailingZeros)
 import Data.Word
-import qualified Data.Vector.Unboxed.Mutable as MUVector
-import DataSketches.Core.Internal.URef
+import Foreign.C.Types
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Storable (peek)
+import Data.Primitive.ByteArray (MutableByteArray, mutableByteArrayContents, newByteArray, readByteArray, writeByteArray)
+import DataSketches.Core.Internal.CBindings
 
--- | HyperLogLog sketch for cardinality (distinct count) estimation.
---
--- Uses p bits of hash to index into 2^p registers. Each register stores
--- the maximum number of leading zeros + 1 seen in the remaining hash bits.
--- The harmonic mean of 2^(-register) values gives the cardinality estimate.
 data HllSketch s = HllSketch
-  { hllRegisters :: {-# UNPACK #-} !(MUVector.MVector s Word8)
+  { hllRegisters :: {-# UNPACK #-} !(MutableByteArray s)
   , hllPrecisionBits :: {-# UNPACK #-} !Int
   , hllNumRegisters :: {-# UNPACK #-} !Int
   }
 
 instance NFData (HllSketch s) where rnf !_ = ()
 
-murmurMix64 :: Word64 -> Word64
-murmurMix64 h0 =
-  let !h1 = (h0 `xor` (h0 `shiftR` 33)) * 0xFF51AFD7ED558CCD
-      !h2 = (h1 `xor` (h1 `shiftR` 33)) * 0xC4CEB9FE1A85EC53
-  in h2 `xor` (h2 `shiftR` 33)
-{-# INLINE murmurMix64 #-}
-
--- | Create a new HyperLogLog sketch with the given precision.
--- precision p means 2^p registers are used.
--- p must be in [4, 26]. Higher p gives better accuracy but uses more space.
--- Standard error is approximately 1.04 / sqrt(2^p).
--- p=12 gives ~1.6% error with 4KB of memory.
 mkHllSketch :: PrimMonad m => Int -> m (HllSketch (PrimState m))
 mkHllSketch p = do
   when (p < 4 || p > 26) $ error "HLL: precision must be in [4, 26]"
   let m = 1 `shiftL` p
-  regs <- MUVector.replicate m 0
+  regs <- newByteArray m
+  forM_ [0..m-1] $ \i -> writeByteArray regs i (0 :: Word8)
   pure HllSketch
     { hllRegisters = regs
     , hllPrecisionBits = p
@@ -55,7 +42,8 @@ mkHllSketch p = do
 hllPrecision :: HllSketch s -> Int
 hllPrecision = hllPrecisionBits
 
--- | Insert an item (as a Word64 hash) into the sketch.
+-- | Pure Haskell insert on raw MutableByteArray — avoids FFI overhead
+-- per item (the hash + single-byte update is too small for FFI to help).
 hllInsert :: PrimMonad m => HllSketch (PrimState m) -> Word64 -> m ()
 hllInsert sk !item =
   let !hash = murmurMix64 item
@@ -65,10 +53,17 @@ hllInsert sk !item =
       !rho = countLeadingZerosW w (64 - p) + 1
       !rhoW8 = fromIntegral rho :: Word8
   in do
-    currentVal <- MUVector.unsafeRead (hllRegisters sk) registerIdx
-    when (rhoW8 > currentVal) $
-      MUVector.unsafeWrite (hllRegisters sk) registerIdx rhoW8
+    currentVal <- readByteArray (hllRegisters sk) registerIdx
+    when ((rhoW8 :: Word8) > currentVal) $
+      writeByteArray (hllRegisters sk) registerIdx rhoW8
 {-# INLINE hllInsert #-}
+
+murmurMix64 :: Word64 -> Word64
+murmurMix64 h0 =
+  let !h1 = (h0 `xor` (h0 `shiftR` 33)) * 0xFF51AFD7ED558CCD
+      !h2 = (h1 `xor` (h1 `shiftR` 33)) * 0xC4CEB9FE1A85EC53
+  in h2 `xor` (h2 `shiftR` 33)
+{-# INLINE murmurMix64 #-}
 
 countLeadingZerosW :: Word64 -> Int -> Int
 countLeadingZerosW 0 bits = bits
@@ -77,53 +72,37 @@ countLeadingZerosW w bits =
   in min clz bits
 {-# INLINE countLeadingZerosW #-}
 
--- | Estimate the cardinality (number of distinct items).
+-- | Estimate via C FFI. The C function computes the harmonic sum using
+-- ldexp(1.0, -val) — a single FPU instruction per register, vs the
+-- Haskell (^^) which went through Integer arithmetic.
 hllEstimate :: PrimMonad m => HllSketch (PrimState m) -> m Double
-hllEstimate sk = do
+hllEstimate sk = unsafePrimToPrim $ do
   let m = hllNumRegisters sk
       mf = fromIntegral m :: Double
-  -- Compute the harmonic mean indicator
-  (harmonicSum, zeroCount) <- computeIndicator sk
-  let alpha = alphaM m
-      rawEstimate = alpha * mf * mf / harmonicSum
-  -- Apply corrections
+      ptr = mutableByteArrayContents (hllRegisters sk)
+  (rawEstimate, _, zeroCount) <- alloca $ \pRaw -> alloca $ \pHarm -> alloca $ \pZero -> do
+    c_hll_estimate ptr (fromIntegral m) pRaw pHarm pZero
+    raw <- peek pRaw
+    harm <- peek pHarm
+    zc <- peek pZero
+    pure (realToFrac raw :: Double, realToFrac harm :: Double, fromIntegral zc :: Int)
+
+  let twoTo32 = 4294967296.0 :: Double
   if rawEstimate <= 2.5 * mf && zeroCount > 0
-    then pure $ mf * log (mf / fromIntegral zeroCount) -- linear counting for small cardinalities
+    then pure $ mf * log (mf / fromIntegral zeroCount)
     else
       if rawEstimate > twoTo32 / 30.0
-        then pure $ negate twoTo32 * log (1.0 - rawEstimate / twoTo32) -- large range correction
+        then pure $ negate twoTo32 * log (1.0 - rawEstimate / twoTo32)
         else pure rawEstimate
-  where
-    twoTo32 = 4294967296.0 :: Double
 
-computeIndicator :: PrimMonad m => HllSketch (PrimState m) -> m (Double, Int)
-computeIndicator sk = do
-  let m = hllNumRegisters sk
-  go 0 0.0 0
-  where
-    go !i !acc !zeros
-      | i >= hllNumRegisters sk = pure (acc, zeros)
-      | otherwise = do
-          val <- MUVector.unsafeRead (hllRegisters sk) i
-          let z = if val == 0 then 1 else 0
-          go (i + 1) (acc + 1.0 / (2.0 ^^ fromIntegral val)) (zeros + z)
-
--- Bias correction constant alpha_m
-alphaM :: Int -> Double
-alphaM m
-  | m == 16 = 0.673
-  | m == 32 = 0.697
-  | m == 64 = 0.709
-  | otherwise = 0.7213 / (1.0 + 1.079 / fromIntegral m)
-
--- | Merge the second sketch into the first. Both must have the same precision.
+-- | Merge: take element-wise max of register arrays.
 hllMerge :: PrimMonad m => HllSketch (PrimState m) -> HllSketch (PrimState m) -> m ()
 hllMerge this other = do
   when (hllPrecisionBits this /= hllPrecisionBits other) $
     error "HLL: cannot merge sketches with different precision"
   let m = hllNumRegisters this
   forM_ [0..m-1] $ \i -> do
-    thisVal <- MUVector.unsafeRead (hllRegisters this) i
-    otherVal <- MUVector.unsafeRead (hllRegisters other) i
-    when (otherVal > thisVal) $
-      MUVector.unsafeWrite (hllRegisters this) i otherVal
+    thisVal <- readByteArray (hllRegisters this) i
+    otherVal <- readByteArray (hllRegisters other) i
+    when ((otherVal :: Word8) > thisVal) $
+      writeByteArray (hllRegisters this) i otherVal

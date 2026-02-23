@@ -36,38 +36,39 @@ Lower is better. Measured on the same machine, single-threaded.
 
 | Benchmark | Haskell (ns/op) | Java (ns/op) | Ratio |
 |-----------|----------------:|-------------:|------:|
-| REQ insert 100 (k=6) | 1,879 | 593 | 3.2x |
-| REQ insert 1,000 (k=6) | 3,720 | 163 | 23x |
-| REQ insert 10,000 (k=6) | 2,897 | 89 | 33x |
-| REQ insert 100,000 (k=6) | 2,490 | 33 | 75x |
-| KLL insert 100 (k=200) | 171 | 322 | **0.53x** |
-| KLL insert 1,000 (k=200) | 650 | 124 | 5.2x |
-| KLL insert 10,000 (k=200) | 902 | 31 | 29x |
-| KLL insert 100,000 (k=200) | 982 | 18 | 55x |
+| REQ insert 100 (k=6) | 1,876 | 593 | 3.2x |
+| REQ insert 1,000 (k=6) | 3,982 | 163 | 24x |
+| REQ insert 10,000 (k=6) | 3,188 | 89 | 36x |
+| REQ insert 100,000 (k=6) | 3,155 | 33 | 96x |
+| KLL insert 100 (k=200) | 172 | 322 | **0.53x** |
+| KLL insert 1,000 (k=200) | 702 | 124 | 5.7x |
+| KLL insert 10,000 (k=200) | 959 | 31 | 31x |
+| KLL insert 100,000 (k=200) | 954 | 18 | 53x |
 
 ### Quantile Sketches — Rank Query
 
 | Benchmark | Haskell (ns/op) | Java (ns/op) | Ratio |
 |-----------|----------------:|-------------:|------:|
-| REQ rank (100 queries, 10k items) | 7,912 | 431 | 18x |
-| KLL rank (100 queries, 10k items) | 71,600 | 352 | 203x |
+| REQ rank (100 queries, 10k items) | 6,968 | 431 | 16x |
+| KLL rank (100 queries, 10k items) | 76,490 | 352 | 217x |
 
 ### Distinct Counting / Frequency
 
 | Benchmark | Haskell (ns/op) | Java (ns/op) | Ratio |
 |-----------|----------------:|-------------:|------:|
-| HLL insert 1,000 (p=12) | 18 | 121 | **0.15x** |
-| HLL insert 10,000 (p=12) | 21 | 16 | 1.3x |
-| HLL insert 100,000 (p=12) | 18 | 7 | 2.6x |
-| CountMin insert 10,000 | 38 | — | — |
-| CountMin insert 100,000 | 41 | — | — |
+| HLL insert 1,000 (p=12) | 19 | 121 | **0.16x** |
+| HLL insert 10,000 (p=12) | 25 | 16 | 1.6x |
+| HLL insert 100,000 (p=12) | 20 | 7 | 2.9x |
+| CountMin insert 10,000 | 46 | — | — |
+| CountMin insert 100,000 | 31 | — | — |
 
 **Notes:**
 - KLL uses flat contiguous unboxed storage (single `ByteArray#` for all items, matching Java's `double[]` layout). Level 0 grows leftward for O(1) insert with no shifting.
-- HLL and CountMin insert are very competitive with Java because they're simple hash + update operations with no sorting or compaction.
-- Haskell REQ uses `Double` (64-bit); Java REQ uses `float` (32-bit). The Haskell version does more work per item for the same k due to wider values and the sort-heavy compaction path.
+- HLL insert is pure Haskell on a raw `MutableByteArray` (same representation as C `uint8_t[]`). HLL estimate uses a C function with `ldexp()` — the pure Haskell version was using `(^^)` which compiled to Integer-based exponentiation.
+- CountMin insert is pure Haskell on raw `MutableByteArray`. CountMin estimate uses a C function for the min-reduction across hash rows.
+- A C `xoshiro256++` RNG and `sort_doubles` (insertion sort for small arrays, qsort for large) are available in cbits for future use.
+- Haskell REQ uses `Double` (64-bit); Java REQ uses `float` (32-bit).
 - The KLL/REQ rank query cost reflects materializing weighted items on each query. The Java library maintains pre-sorted auxiliary structures.
-- The Java library has had extensive optimization over many years. The Haskell port prioritizes correctness and idiomatic code. The main remaining overheads are dictionary passing (polymorphic `PrimMonad m`), the REQ compactors stored as a boxed `Vector` of mutable records, and GC pressure from the sort-compact cycle.
 
 ### Running Benchmarks
 

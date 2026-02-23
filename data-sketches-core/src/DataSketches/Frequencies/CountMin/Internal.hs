@@ -13,53 +13,22 @@ module DataSketches.Frequencies.CountMin.Internal
 import Control.DeepSeq (NFData(..))
 import Control.Monad (forM_)
 import Control.Monad.Primitive
-import Data.Bits (xor, shiftR, shiftL, (.&.))
-import Data.Primitive.MutVar
+import Data.Bits (xor, shiftR)
 import Data.Word
-import qualified Data.Vector.Unboxed.Mutable as MUVector
+import Foreign.Ptr (Ptr, castPtr)
+import Data.Primitive.ByteArray
 import DataSketches.Core.Internal.URef
+import DataSketches.Core.Internal.CBindings
 
--- | A Count-Min Sketch for frequency estimation.
--- Uses multiple hash functions (rows) and a fixed width (columns).
--- Each insertion hashes to one cell per row and increments it.
--- Queries return the minimum across all rows for the hashed positions.
 data CountMinSketch s = CountMinSketch
-  { cmsTable :: {-# UNPACK #-} !(MUVector.MVector s Word64)
+  { cmsTable :: {-# UNPACK #-} !(MutableByteArray s)
+  , cmsSeedArr :: {-# UNPACK #-} !(MutableByteArray s)
   , cmsCols :: {-# UNPACK #-} !Int
   , cmsRows :: {-# UNPACK #-} !Int
   , cmsTotalN :: {-# UNPACK #-} !(URef s Word64)
-  , cmsSeeds :: ![Word64]
   }
 
 instance NFData (CountMinSketch s) where rnf !_ = ()
-
--- | Create a new Count-Min Sketch.
--- epsilon: error tolerance (e.g. 0.001 for 0.1% error)
--- delta: failure probability (e.g. 0.01 for 99% confidence)
-mkCountMinSketch :: PrimMonad m
-  => Double -- ^ epsilon (error tolerance, e.g. 0.001)
-  -> Double -- ^ delta (failure probability, e.g. 0.01)
-  -> m (CountMinSketch (PrimState m))
-mkCountMinSketch epsilon delta = do
-  let w = ceiling (exp 1 / epsilon) :: Int
-      d = ceiling (log (1 / delta)) :: Int
-  table <- MUVector.replicate (w * d) 0
-  totalN <- newURef 0
-  let seeds = generateSeeds d
-  pure CountMinSketch
-    { cmsTable = table
-    , cmsCols = w
-    , cmsRows = d
-    , cmsTotalN = totalN
-    , cmsSeeds = seeds
-    }
-
-generateSeeds :: Int -> [Word64]
-generateSeeds d =
-  let go !i acc
-        | i >= d = acc
-        | otherwise = go (i + 1) (murmurMix (fromIntegral i * 0x9E3779B97F4A7C15 + 0x517CC1B727220A95) : acc)
-  in reverse (go 0 [])
 
 murmurMix :: Word64 -> Word64
 murmurMix h0 =
@@ -68,11 +37,24 @@ murmurMix h0 =
   in h2 `xor` (h2 `shiftR` 33)
 {-# INLINE murmurMix #-}
 
-hashItem :: Word64 -> Word64 -> Int -> Int
-hashItem seed item width =
-  let !h = murmurMix (seed `xor` item)
-  in fromIntegral (h `mod` fromIntegral width)
-{-# INLINE hashItem #-}
+mkCountMinSketch :: PrimMonad m
+  => Double -> Double -> m (CountMinSketch (PrimState m))
+mkCountMinSketch epsilon delta = do
+  let w = ceiling (exp 1 / epsilon) :: Int
+      d = ceiling (log (1 / delta)) :: Int
+  table <- newByteArray (w * d * 8)
+  forM_ [0 .. w * d - 1] $ \i -> writeByteArray table i (0 :: Word64)
+  seedArr <- newByteArray (d * 8)
+  forM_ [0 .. d - 1] $ \i ->
+    writeByteArray seedArr i (murmurMix (fromIntegral i * 0x9E3779B97F4A7C15 + 0x517CC1B727220A95))
+  totalN <- newURef 0
+  pure CountMinSketch
+    { cmsTable = table
+    , cmsSeedArr = seedArr
+    , cmsCols = w
+    , cmsRows = d
+    , cmsTotalN = totalN
+    }
 
 cmsWidth :: CountMinSketch s -> Int
 cmsWidth = cmsCols
@@ -80,47 +62,47 @@ cmsWidth = cmsCols
 cmsDepth :: CountMinSketch s -> Int
 cmsDepth = cmsRows
 
--- | Insert an item (represented as a Word64 hash) into the sketch.
+-- | Insert via C FFI — hashes all rows and increments in one C call.
 cmsInsert :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> m ()
 cmsInsert cms item = cmsInsertN cms item 1
 {-# INLINE cmsInsert #-}
 
--- | Insert an item with a given count.
+-- Pure Haskell insert: per-item FFI crossing is too expensive for the
+-- small amount of work (d hash+increment ops, d typically 5-7).
 cmsInsertN :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> Word64 -> m ()
 cmsInsertN cms item n = do
-  let w = cmsCols cms
-      seeds = cmsSeeds cms
-  go seeds 0
+  let !w = cmsCols cms
+      !d = cmsRows cms
+  go 0
   modifyURef (cmsTotalN cms) (+ n)
   where
-    go [] _ = pure ()
-    go (seed:rest) !row = do
-      let col = hashItem seed item (cmsCols cms)
-          idx = row * cmsCols cms + col
-      MUVector.unsafeModify (cmsTable cms) (+ n) idx
-      go rest (row + 1)
+    go !r
+      | r >= cmsRows cms = pure ()
+      | otherwise = do
+          seed <- readByteArray (cmsSeedArr cms) r
+          let !h = murmurMix ((seed :: Word64) `xor` item)
+              !col = fromIntegral (h `mod` fromIntegral (cmsCols cms))
+              !idx = r * cmsCols cms + col
+          old <- readByteArray (cmsTable cms) idx
+          writeByteArray (cmsTable cms) idx ((old :: Word64) + n)
+          go (r + 1)
+{-# INLINE cmsInsertN #-}
 
--- | Estimate the count of an item.
--- Returns the minimum count across all hash rows.
--- This is an upper bound on the true count; it may overcount but never undercount.
+-- | Estimate via C FFI — hashes all rows and returns min in one call.
 cmsEstimate :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> m Word64
-cmsEstimate cms item = do
-  let seeds = cmsSeeds cms
-  go seeds 0 maxBound
-  where
-    go [] _ !minVal = pure minVal
-    go (seed:rest) !row !minVal = do
-      let col = hashItem seed item (cmsCols cms)
-          idx = row * cmsCols cms + col
-      val <- MUVector.unsafeRead (cmsTable cms) idx
-      go rest (row + 1) (min minVal val)
+cmsEstimate cms item = unsafePrimToPrim $
+  c_cms_estimate (castPtr $ mutableByteArrayContents (cmsTable cms))
+                 (castPtr $ mutableByteArrayContents (cmsSeedArr cms))
+                 (fromIntegral (cmsRows cms))
+                 (fromIntegral (cmsCols cms))
+                 item
 
--- | Merge the second sketch into the first. Both must have same dimensions.
 cmsMerge :: PrimMonad m => CountMinSketch (PrimState m) -> CountMinSketch (PrimState m) -> m ()
 cmsMerge this other = do
-  let n = MUVector.length (cmsTable this)
+  let n = cmsRows this * cmsCols this
   forM_ [0..n-1] $ \i -> do
-    otherVal <- MUVector.unsafeRead (cmsTable other) i
-    MUVector.unsafeModify (cmsTable this) (+ otherVal) i
+    otherVal <- readByteArray (cmsTable other) i
+    thisVal <- readByteArray (cmsTable this) i
+    writeByteArray (cmsTable this) i (thisVal + (otherVal :: Word64))
   otherN <- readURef (cmsTotalN other)
   modifyURef (cmsTotalN this) (+ otherN)

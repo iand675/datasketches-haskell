@@ -39,6 +39,10 @@ dependencies:
 
 library:
   source-dirs: src
+  c-sources:
+  - cbits/sketches.c
+  cc-options:
+  - -O2
   exposed-modules:
   - DataSketches.Core.Internal.URef
   - DataSketches.Core.Snapshot
@@ -53,6 +57,7 @@ library:
   - DataSketches.Frequencies.CountMin.Internal
   - DataSketches.Distinct.HyperLogLog.Internal
   - DataSketches.Distinct.Theta.Internal
+  - DataSketches.Core.Internal.CBindings
 
 tests:
   data-sketches-core-test:
