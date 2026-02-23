@@ -12,7 +12,7 @@ bug-reports:    https://github.com/iand675/datasketches-haskell/issues
 author:         Ian Duncan, Rob Bassi
 maintainer:     ian@iankduncan.com
 copyright:      2021 Ian Duncan, Rob Bassi, Mercury Technologies
-license:        Apache
+license:        Apache-2.0
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
