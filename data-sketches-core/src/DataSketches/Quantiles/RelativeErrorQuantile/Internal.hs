@@ -9,7 +9,7 @@ import System.Random.MWC (Gen)
 
 import DataSketches.Core.Snapshot
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import DataSketches.Core.Internal.URef (URef, readURef)
+import DataSketches.Core.Internal.URef (MutableFields, readField, writeField, modifyField)
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary (ReqAuxiliary)
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor (ReqCompactor)
 import Control.DeepSeq (NFData, rnf)
@@ -19,58 +19,110 @@ import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuf
 import qualified DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary as Auxiliary
 import Control.Exception (Exception)
 
-
-{- |
-This Relative Error Quantiles Sketch is the Haskell implementation based on the paper
-"Relative Error Streaming Quantiles", https://arxiv.org/abs/2004.01668, and loosely derived from
-a Python prototype written by Pavel Vesely, ported from the Java equivalent.
-
-This implementation differs from the algorithm described in the paper in the following:
-
-The algorithm requires no upper bound on the stream length.
-Instead, each relative-compactor counts the number of compaction operations performed
-so far (via variable state). Initially, the relative-compactor starts with INIT_NUMBER_OF_SECTIONS.
-Each time the number of compactions (variable state) exceeds 2^{numSections - 1}, we double
-numSections. Note that after merging the sketch with another one variable state may not correspond
-to the number of compactions performed at a particular level, however, since the state variable
-never exceeds the number of compactions, the guarantees of the sketch remain valid.
-
-The size of each section (variable k and sectionSize in the code and parameter k in
-the paper) is initialized with a value set by the user via variable k.
-When the number of sections doubles, we decrease sectionSize by a factor of sqrt(2).
-This is applied at each level separately. Thus, when we double the number of sections, the
-nominal compactor size increases by a factor of approx. sqrt(2) (+/- rounding).
-
-The merge operation here does not perform "special compactions", which are used in the paper
-to allow for a tight mathematical analysis of the sketch.
-
-This implementation provides a number of capabilities not discussed in the paper or provided
-in the Python prototype.
-
-The Python prototype only implemented high accuracy for low ranks. This implementation
-provides the user with the ability to choose either high rank accuracy or low rank accuracy at
-the time of sketch construction.
-
-- The Python prototype only implemented a comparison criterion of "<". This implementation
-allows the user to switch back and forth between the "<=" criterion and the "<=" criterion.
--}
+-- | Mutable sketch state packed into a single 'MutableByteArray'.
+--
+-- All 6 scalar fields occupy 48 bytes (6 × 8-byte slots), fitting entirely
+-- within one 64-byte x86-64 cache line. On the insert hot path, totalN,
+-- retainedItems, maxNominalCapacitiesSize, minValue, maxValue, and sumValue
+-- are all read/written — a single cache line fetch covers all of them.
+--
+-- Layout (element index → field):
+--   0: totalN                 (Int, representing Word64)
+--   1: minValue               (Double)
+--   2: maxValue               (Double)
+--   3: sumValue               (Double)
+--   4: retainedItems          (Int)
+--   5: maxNominalCapacitiesSize (Int)
 data ReqSketch s = ReqSketch
   { k :: !Word32
   , rankAccuracySetting :: !RankAccuracy
   , criterion :: !Criterion
   , sketchRng :: {-# UNPACK #-} !(Gen s)
-  , totalN :: {-# UNPACK #-} !(URef s Word64)
-  , minValue :: {-# UNPACK #-} !(URef s Double)
-  , maxValue :: {-# UNPACK #-} !(URef s Double)
-  , sumValue :: {-# UNPACK #-} !(URef s Double)
-  , retainedItems :: {-# UNPACK #-} !(URef s Int)
-  , maxNominalCapacitiesSize :: {-# UNPACK #-} !(URef s Int)
+  , sketchFields :: {-# UNPACK #-} !(MutableFields s)
   , aux :: {-# UNPACK #-} !(MutVar s (Maybe ReqAuxiliary))
   , compactors :: {-# UNPACK #-} !(MutVar s (Vector.Vector (ReqCompactor s)))
   } deriving (Generic)
 
 instance NFData (ReqSketch s) where
-  rnf !rs = ()
+  rnf !_ = ()
+
+-- Field indices
+fTotalN, fMinValue, fMaxValue, fSumValue, fRetainedItems, fMaxNomCapSize :: Int
+fTotalN         = 0
+fMinValue       = 1
+fMaxValue       = 2
+fSumValue       = 3
+fRetainedItems  = 4
+fMaxNomCapSize  = 5
+
+sketchFieldBytes :: Int
+sketchFieldBytes = 6 * 8
+
+-- Typed accessors
+
+getTotalN :: PrimMonad m => ReqSketch (PrimState m) -> m Word64
+getTotalN sk = do
+  v <- readField (sketchFields sk) fTotalN
+  pure $! fromIntegral (v :: Int)
+{-# INLINE getTotalN #-}
+
+setTotalN :: PrimMonad m => ReqSketch (PrimState m) -> Word64 -> m ()
+setTotalN sk v = writeField (sketchFields sk) fTotalN (fromIntegral v :: Int)
+{-# INLINE setTotalN #-}
+
+modifyTotalN :: PrimMonad m => ReqSketch (PrimState m) -> (Word64 -> Word64) -> m ()
+modifyTotalN sk f = do
+  !v <- getTotalN sk
+  setTotalN sk $! f v
+{-# INLINE modifyTotalN #-}
+
+getMinValue :: PrimMonad m => ReqSketch (PrimState m) -> m Double
+getMinValue sk = readField (sketchFields sk) fMinValue
+{-# INLINE getMinValue #-}
+
+setMinValue :: PrimMonad m => ReqSketch (PrimState m) -> Double -> m ()
+setMinValue sk = writeField (sketchFields sk) fMinValue
+{-# INLINE setMinValue #-}
+
+getMaxValue :: PrimMonad m => ReqSketch (PrimState m) -> m Double
+getMaxValue sk = readField (sketchFields sk) fMaxValue
+{-# INLINE getMaxValue #-}
+
+setMaxValue :: PrimMonad m => ReqSketch (PrimState m) -> Double -> m ()
+setMaxValue sk = writeField (sketchFields sk) fMaxValue
+{-# INLINE setMaxValue #-}
+
+getSumValue :: PrimMonad m => ReqSketch (PrimState m) -> m Double
+getSumValue sk = readField (sketchFields sk) fSumValue
+{-# INLINE getSumValue #-}
+
+modifySumValue :: PrimMonad m => ReqSketch (PrimState m) -> (Double -> Double) -> m ()
+modifySumValue sk f = modifyField (sketchFields sk) fSumValue f
+{-# INLINE modifySumValue #-}
+
+getRetainedItems :: PrimMonad m => ReqSketch (PrimState m) -> m Int
+getRetainedItems sk = readField (sketchFields sk) fRetainedItems
+{-# INLINE getRetainedItems #-}
+
+setRetainedItems :: PrimMonad m => ReqSketch (PrimState m) -> Int -> m ()
+setRetainedItems sk = writeField (sketchFields sk) fRetainedItems
+{-# INLINE setRetainedItems #-}
+
+modifyRetainedItems :: PrimMonad m => ReqSketch (PrimState m) -> (Int -> Int) -> m ()
+modifyRetainedItems sk = modifyField (sketchFields sk) fRetainedItems
+{-# INLINE modifyRetainedItems #-}
+
+getMaxNomCapSize :: PrimMonad m => ReqSketch (PrimState m) -> m Int
+getMaxNomCapSize sk = readField (sketchFields sk) fMaxNomCapSize
+{-# INLINE getMaxNomCapSize #-}
+
+setMaxNomCapSize :: PrimMonad m => ReqSketch (PrimState m) -> Int -> m ()
+setMaxNomCapSize sk = writeField (sketchFields sk) fMaxNomCapSize
+{-# INLINE setMaxNomCapSize #-}
+
+modifyMaxNomCapSize :: PrimMonad m => ReqSketch (PrimState m) -> (Int -> Int) -> m ()
+modifyMaxNomCapSize sk = modifyField (sketchFields sk) fMaxNomCapSize
+{-# INLINE modifyMaxNomCapSize #-}
 
 data ReqSketchSnapshot = ReqSketchSnapshot
     { snapshotRankAccuracySetting :: !RankAccuracy
@@ -80,46 +132,48 @@ data ReqSketchSnapshot = ReqSketchSnapshot
     , snapshotMaxValue :: !Double
     , snapshotRetainedItems :: !Int
     , snapshotMaxNominalCapacitiesSize :: !Int
-    -- , aux :: !(MutVar s (Maybe ()))
     , snapshotCompactors :: !(Vector.Vector (Snapshot ReqCompactor))
     } deriving Show
 
 instance TakeSnapshot ReqSketch where
-  type Snapshot ReqSketch = ReqSketchSnapshot 
-  takeSnapshot ReqSketch{..} = ReqSketchSnapshot rankAccuracySetting criterion
-    <$> readURef totalN
-    <*> readURef minValue
-    <*> readURef maxValue
-    <*> readURef retainedItems
-    <*> readURef maxNominalCapacitiesSize
-    <*> (readMutVar compactors >>= mapM takeSnapshot)
+  type Snapshot ReqSketch = ReqSketchSnapshot
+  takeSnapshot sk = do
+    tn <- getTotalN sk
+    mn <- getMinValue sk
+    mx <- getMaxValue sk
+    ri <- getRetainedItems sk
+    mc <- getMaxNomCapSize sk
+    cs <- readMutVar (compactors sk) >>= mapM takeSnapshot
+    pure $ ReqSketchSnapshot (rankAccuracySetting sk) (criterion sk) tn mn mx ri mc cs
 
 getCompactors :: PrimMonad m => ReqSketch (PrimState m) -> m (Vector.Vector (ReqCompactor (PrimState m)))
 getCompactors = readMutVar . compactors
+{-# INLINE getCompactors #-}
 
 computeTotalRetainedItems :: PrimMonad m => ReqSketch (PrimState m) -> m Int
 computeTotalRetainedItems this = do
-  compactors <- getCompactors this
-  Vector.foldM countBuffer 0 compactors
+  cs <- getCompactors this
+  Vector.foldM countBuffer 0 cs
   where
     countBuffer acc compactor = do
       buff <- Compactor.getBuffer compactor
       buffSize <- DoubleBuffer.getCount buff
-      pure $ buffSize + acc
+      pure $! buffSize + acc
 
 retainedItemCount :: PrimMonad m => ReqSketch (PrimState m) -> m Int
-retainedItemCount = readURef . retainedItems
+retainedItemCount = getRetainedItems
+{-# INLINE retainedItemCount #-}
 
--- | Get the total number of items inserted into the sketch
 count :: PrimMonad m => ReqSketch (PrimState m) -> m Word64
-count = readURef . totalN
+count = getTotalN
+{-# INLINE count #-}
 
 mkAuxiliaryFromReqSketch :: PrimMonad m => ReqSketch (PrimState m) -> m ReqAuxiliary
 mkAuxiliaryFromReqSketch this = do
   total <- count this
-  retainedItems <- retainedItemCount this
-  compactors <- getCompactors this
-  Auxiliary.mkAuxiliary (rankAccuracySetting this) total retainedItems compactors
+  ri <- retainedItemCount this
+  cs <- getCompactors this
+  Auxiliary.mkAuxiliary (rankAccuracySetting this) total ri cs
 
 data CumulativeDistributionInvariants
   = CumulativeDistributionInvariantsSplitsAreEmpty
