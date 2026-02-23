@@ -3,15 +3,18 @@
 #include <string.h>
 #include <math.h>
 
-/* ========================================================================
- * Count-Min Sketch — entire implementation in C
- * ======================================================================== */
-
 static inline uint64_t cms_murmur_mix(uint64_t h) {
     h ^= h >> 33; h *= 0xFF51AFD7ED558CCDULL;
     h ^= h >> 33; h *= 0xC4CEB9FE1A85EC53ULL;
     h ^= h >> 33;
     return h;
+}
+
+/* Fast modular reduction without division.
+   Maps a 64-bit hash uniformly into [0, n) using the upper bits of
+   a widening multiply. Avoids the ~30-cycle 64-bit division. */
+static inline uint32_t fast_mod(uint64_t hash, uint32_t n) {
+    return (uint32_t)((__uint128_t)hash * (__uint128_t)n >> 64);
 }
 
 typedef struct {
@@ -36,7 +39,6 @@ cms_sketch_t *cms_new(double epsilon, double delta) {
     sk->table = (uint64_t *)calloc(w * d, sizeof(uint64_t));
     sk->seeds = (uint64_t *)malloc(d * sizeof(uint64_t));
     cms_generate_seeds(sk->seeds, d);
-    sk->total_n = 0;
     return sk;
 }
 
@@ -45,21 +47,24 @@ void cms_free(cms_sketch_t *sk) {
 }
 
 void cms_c_insert(cms_sketch_t *sk, uint64_t item, uint64_t count) {
+    int cols = sk->cols;
     for (int r = 0; r < sk->rows; r++) {
         uint64_t h = cms_murmur_mix(sk->seeds[r] ^ item);
-        int col = (int)(h % (uint64_t)sk->cols);
-        sk->table[r * sk->cols + col] += count;
+        int col = (int)fast_mod(h, (uint32_t)cols);
+        sk->table[r * cols + col] += count;
     }
     sk->total_n += count;
 }
 
 uint64_t cms_c_estimate(const cms_sketch_t *sk, uint64_t item) {
     uint64_t min_val = UINT64_MAX;
+    int cols = sk->cols;
     for (int r = 0; r < sk->rows; r++) {
         uint64_t h = cms_murmur_mix(sk->seeds[r] ^ item);
-        int col = (int)(h % (uint64_t)sk->cols);
-        uint64_t val = sk->table[r * sk->cols + col];
-        if (val < min_val) min_val = val;
+        int col = (int)fast_mod(h, (uint32_t)cols);
+        uint64_t val = sk->table[r * cols + col];
+        /* Branchless min */
+        min_val = val < min_val ? val : min_val;
     }
     return min_val;
 }

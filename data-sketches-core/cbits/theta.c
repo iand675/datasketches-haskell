@@ -2,10 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ========================================================================
- * Theta Sketch — entire implementation in C
- * ======================================================================== */
-
 static inline uint64_t theta_murmur_mix64(uint64_t h) {
     h ^= h >> 33; h *= 0xFF51AFD7ED558CCDULL;
     h ^= h >> 33; h *= 0xC4CEB9FE1A85EC53ULL;
@@ -16,7 +12,7 @@ static inline uint64_t theta_murmur_mix64(uint64_t h) {
 #define THETA_MAX UINT64_MAX
 
 typedef struct {
-    uint64_t *entries;
+    uint64_t *entries;   /* kept sorted for O(log k) lookup */
     int       count;
     int       capacity;
     int       k;
@@ -24,39 +20,52 @@ typedef struct {
     int       is_empty;
 } theta_sketch_t;
 
-static int cmp_u64(const void *a, const void *b) {
-    uint64_t va = *(const uint64_t *)a;
-    uint64_t vb = *(const uint64_t *)b;
-    if (va < vb) return -1;
-    if (va > vb) return 1;
-    return 0;
-}
-
-static int theta_check_dup(const theta_sketch_t *sk, uint64_t hash) {
-    for (int i = 0; i < sk->count; i++)
-        if (sk->entries[i] == hash) return 1;
-    return 0;
-}
-
-static void theta_rebuild(theta_sketch_t *sk) {
-    if (sk->count <= sk->k) return;
-    qsort(sk->entries, sk->count, sizeof(uint64_t), cmp_u64);
-    uint64_t new_theta = sk->entries[sk->k - 1];
-    int below = 0;
-    for (int i = 0; i < sk->count; i++) {
-        if (sk->entries[i] < new_theta) below++;
-        else break;
+/* Binary search for hash in sorted entries. Returns 1 if found. */
+static int theta_find(const theta_sketch_t *sk, uint64_t hash, int *insert_pos) {
+    int lo = 0, hi = sk->count - 1;
+    while (lo <= hi) {
+        int mid = lo + ((hi - lo) >> 1);
+        uint64_t v = sk->entries[mid];
+        if (v == hash) { *insert_pos = mid; return 1; }
+        if (v < hash) lo = mid + 1;
+        else hi = mid - 1;
     }
-    sk->theta = new_theta;
-    sk->count = below;
+    *insert_pos = lo;
+    return 0;
 }
 
 static void theta_ensure_cap(theta_sketch_t *sk) {
     if (sk->count >= sk->capacity) {
-        int new_cap = sk->capacity * 2;
-        sk->entries = (uint64_t *)realloc(sk->entries, new_cap * sizeof(uint64_t));
-        sk->capacity = new_cap;
+        sk->capacity *= 2;
+        sk->entries = (uint64_t *)realloc(sk->entries, sk->capacity * sizeof(uint64_t));
     }
+}
+
+/* Insert into sorted position */
+static void theta_sorted_insert(theta_sketch_t *sk, uint64_t hash) {
+    int pos;
+    if (theta_find(sk, hash, &pos)) return; /* duplicate */
+    theta_ensure_cap(sk);
+    /* Shift right to make room */
+    if (pos < sk->count)
+        memmove(sk->entries + pos + 1, sk->entries + pos,
+                (sk->count - pos) * sizeof(uint64_t));
+    sk->entries[pos] = hash;
+    sk->count++;
+}
+
+static void theta_rebuild(theta_sketch_t *sk) {
+    if (sk->count <= sk->k) return;
+    /* Entries are already sorted. The k-th smallest is at index k-1. */
+    sk->theta = sk->entries[sk->k - 1];
+    /* Binary search for how many are strictly < theta */
+    int lo = 0, hi = sk->count;
+    while (lo < hi) {
+        int mid = lo + ((hi - lo) >> 1);
+        if (sk->entries[mid] < sk->theta) lo = mid + 1;
+        else hi = mid;
+    }
+    sk->count = lo;
 }
 
 theta_sketch_t *theta_new(int k) {
@@ -76,10 +85,8 @@ void theta_free(theta_sketch_t *sk) {
 void theta_c_insert(theta_sketch_t *sk, uint64_t item) {
     uint64_t hash = theta_murmur_mix64(item);
     if (hash == 0 || hash >= sk->theta) return;
-    if (theta_check_dup(sk, hash)) return;
     sk->is_empty = 0;
-    theta_ensure_cap(sk);
-    sk->entries[sk->count++] = hash;
+    theta_sorted_insert(sk, hash);
     theta_rebuild(sk);
 }
 
@@ -91,12 +98,10 @@ double theta_c_estimate(const theta_sketch_t *sk) {
 
 int theta_c_is_empty(const theta_sketch_t *sk) { return sk->is_empty; }
 
-/* Insert a raw hash (no re-hashing), for set operations */
+/* Insert a raw hash maintaining sorted order, for set operations */
 static void theta_insert_hash(theta_sketch_t *sk, uint64_t hash) {
     if (hash == 0 || hash >= sk->theta) return;
-    if (theta_check_dup(sk, hash)) return;
-    theta_ensure_cap(sk);
-    sk->entries[sk->count++] = hash;
+    theta_sorted_insert(sk, hash);
 }
 
 theta_sketch_t *theta_c_union(const theta_sketch_t *a, const theta_sketch_t *b) {
@@ -104,40 +109,31 @@ theta_sketch_t *theta_c_union(const theta_sketch_t *a, const theta_sketch_t *b) 
     theta_sketch_t *r = theta_new(k);
     uint64_t min_theta = a->theta < b->theta ? a->theta : b->theta;
     r->theta = min_theta;
-
     if (!a->is_empty) {
         r->is_empty = 0;
-        for (int i = 0; i < a->count; i++)
-            if (a->entries[i] < min_theta) theta_insert_hash(r, a->entries[i]);
+        for (int i = 0; i < a->count && a->entries[i] < min_theta; i++)
+            theta_insert_hash(r, a->entries[i]);
     }
     if (!b->is_empty) {
         r->is_empty = 0;
-        for (int i = 0; i < b->count; i++)
-            if (b->entries[i] < min_theta) theta_insert_hash(r, b->entries[i]);
+        for (int i = 0; i < b->count && b->entries[i] < min_theta; i++)
+            theta_insert_hash(r, b->entries[i]);
     }
     theta_rebuild(r);
     return r;
-}
-
-static int theta_contains(const theta_sketch_t *sk, uint64_t hash) {
-    for (int i = 0; i < sk->count; i++)
-        if (sk->entries[i] == hash) return 1;
-    return 0;
 }
 
 theta_sketch_t *theta_c_intersection(const theta_sketch_t *a, const theta_sketch_t *b) {
     int k = a->k > b->k ? a->k : b->k;
     theta_sketch_t *r = theta_new(k);
     if (a->is_empty || b->is_empty) return r;
-
     uint64_t min_theta = a->theta < b->theta ? a->theta : b->theta;
     r->theta = min_theta;
     r->is_empty = 0;
-
-    for (int i = 0; i < a->count; i++) {
-        uint64_t h = a->entries[i];
-        if (h < min_theta && theta_contains(b, h))
-            theta_insert_hash(r, h);
+    for (int i = 0; i < a->count && a->entries[i] < min_theta; i++) {
+        int pos;
+        if (theta_find(b, a->entries[i], &pos))
+            theta_insert_hash(r, a->entries[i]);
     }
     theta_rebuild(r);
     return r;
@@ -146,15 +142,13 @@ theta_sketch_t *theta_c_intersection(const theta_sketch_t *a, const theta_sketch
 theta_sketch_t *theta_c_difference(const theta_sketch_t *a, const theta_sketch_t *b) {
     theta_sketch_t *r = theta_new(a->k);
     if (a->is_empty) return r;
-
     uint64_t min_theta = a->theta < b->theta ? a->theta : b->theta;
     r->theta = min_theta;
     r->is_empty = 0;
-
-    for (int i = 0; i < a->count; i++) {
-        uint64_t h = a->entries[i];
-        if (h < min_theta && !theta_contains(b, h))
-            theta_insert_hash(r, h);
+    for (int i = 0; i < a->count && a->entries[i] < min_theta; i++) {
+        int pos;
+        if (!theta_find(b, a->entries[i], &pos))
+            theta_insert_hash(r, a->entries[i]);
     }
     theta_rebuild(r);
     return r;
