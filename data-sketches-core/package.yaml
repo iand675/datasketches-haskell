@@ -41,6 +41,7 @@ library:
   source-dirs: src
   c-sources:
   - cbits/sketches.c
+  - cbits/kll.c
   cc-options:
   - -O2
   exposed-modules:

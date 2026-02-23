@@ -54,6 +54,7 @@ library
   cc-options: -O2
   c-sources:
       cbits/sketches.c
+      cbits/kll.c
   build-depends:
       base >=4.7 && <5
     , deepseq
