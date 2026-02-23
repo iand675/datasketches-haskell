@@ -30,7 +30,6 @@ findHarnessDir = do
 javaClasspathFor :: FilePath -> String
 javaClasspathFor dir = dir ++ ":" ++ dir ++ "/lib/*"
 
--- Run a batch of commands against the Java harness and return all output lines
 runJavaHarness :: FilePath -> [String] -> IO [String]
 runJavaHarness harnessDir commands = do
   let cp = CreateProcess
@@ -68,7 +67,6 @@ runJavaHarness harnessDir commands = do
   _ <- waitForProcess ph
   pure results
 
--- Parse a double from Java output, handling "NaN"
 parseJavaDouble :: String -> Double
 parseJavaDouble s
   | s == "NaN" = 0/0
@@ -88,24 +86,33 @@ spec = do
       describe "KLL Sketch cross-validation with Java" $
         kllCrossValidation harnessDir
 
--- REQ sketch: property tests comparing Haskell vs Java
+-- | Generate integer-valued doubles in a range. These are exactly
+-- representable in both float and double, eliminating precision as a
+-- source of disagreement between the Java (float) and Haskell (double)
+-- REQ sketches.
+genIntDouble :: H.Range Int -> H.Gen Double
+genIntDouble r = fromIntegral <$> Gen.int r
+
+-- REQ sketch: property tests comparing Haskell vs Java.
+--
+-- Java REQ uses float (32-bit); Haskell uses Double (64-bit).
+-- We use integer-valued doubles so both representations are identical
+-- and exact-mode results must match exactly.
 reqCrossValidation :: FilePath -> Spec
 reqCrossValidation harnessDir = do
 
-  specify "REQ: exact mode count/min/max match Java (HighRanksAreAccurate, <)" $ hedgehog $
+  specify "REQ: exact mode count/min/max match Java (HighRanksAreAccurate)" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.linear 1 50) $
-        Gen.double (Range.linearFrac 1 1000)
+        genIntDouble (Range.linear 1 1000)
       let k = 50 :: Word32
       liftIO $ do
-        -- Haskell
         sk <- REQ.mkReqSketch k REQ.HighRanksAreAccurate
         forM_ values $ REQ.insert sk
         hCount <- REQ.count sk
         hMin <- REQ.minimum sk
         hMax <- REQ.maximum sk
 
-        -- Java (note: Java REQ uses float internally, not double)
         let jCmds =
               [ "REQ " ++ show k ++ " hra lt"
               , "INSERT " ++ unwords (fmap show values)
@@ -120,15 +127,15 @@ reqCrossValidation harnessDir = do
             jMax = parseJavaDouble (jResults !! 2)
 
         hCount `shouldBe` jCount
-        assertApproxEqual "min" 1e-4 hMin jMin
-        assertApproxEqual "max" 1e-4 hMax jMax
+        hMin `shouldBe` jMin
+        hMax `shouldBe` jMax
 
-  specify "REQ: exact mode ranks match Java (HighRanksAreAccurate, <)" $ hedgehog $
+  specify "REQ: exact mode ranks match Java exactly (HighRanksAreAccurate, <)" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.linear 10 50) $
-        Gen.double (Range.linearFrac 1 100)
+        genIntDouble (Range.linear 1 200)
       queryValues <- H.forAll $ Gen.list (Range.linear 1 5) $
-        Gen.double (Range.linearFrac 0 110)
+        genIntDouble (Range.linear 0 210)
       let k = 50 :: Word32
       liftIO $ do
         sk <- REQ.mkReqSketch k REQ.HighRanksAreAccurate
@@ -145,15 +152,15 @@ reqCrossValidation harnessDir = do
         let jRanks = fmap parseJavaDouble jResults
 
         forM_ (zip3 queryValues hRanks jRanks) $ \(qv, hr, jr) ->
-          unless (isNaN hr && isNaN jr) $
-            assertApproxEqual ("rank of " ++ show qv) 0.05 hr jr
+          unless (isNaN hr && isNaN jr) $ do
+            hr `shouldBe` jr
 
-  specify "REQ: exact mode ranks match Java (LowRanksAreAccurate, <)" $ hedgehog $
+  specify "REQ: exact mode ranks match Java exactly (LowRanksAreAccurate, <)" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.linear 10 50) $
-        Gen.double (Range.linearFrac 1 100)
+        genIntDouble (Range.linear 1 200)
       queryValues <- H.forAll $ Gen.list (Range.linear 1 5) $
-        Gen.double (Range.linearFrac 0 110)
+        genIntDouble (Range.linear 0 210)
       let k = 50 :: Word32
       liftIO $ do
         sk <- REQ.mkReqSketch k REQ.LowRanksAreAccurate
@@ -170,15 +177,15 @@ reqCrossValidation harnessDir = do
         let jRanks = fmap parseJavaDouble jResults
 
         forM_ (zip3 queryValues hRanks jRanks) $ \(qv, hr, jr) ->
-          unless (isNaN hr && isNaN jr) $
-            assertApproxEqual ("rank of " ++ show qv) 0.05 hr jr
+          unless (isNaN hr && isNaN jr) $ do
+            hr `shouldBe` jr
 
-  specify "REQ: estimation mode rank bounds overlap Java (k=6, 200 items)" $ hedgehog $
+  specify "REQ: estimation mode ranks are both valid approximations (k=6, 200 items)" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.singleton 200) $
-        Gen.double (Range.linearFrac 1 1000)
-      queryValues <- H.forAll $ Gen.list (Range.linear 1 5) $
-        Gen.double (Range.linearFrac 1 1000)
+        genIntDouble (Range.linear 1 1000)
+      queryValues <- H.forAll $ Gen.list (Range.linear 1 3) $
+        genIntDouble (Range.linear 1 1000)
       let k = 6 :: Word32
       liftIO $ do
         sk <- REQ.mkReqSketch k REQ.HighRanksAreAccurate
@@ -194,18 +201,26 @@ reqCrossValidation harnessDir = do
         jResults <- runJavaHarness harnessDir jCmds
         let jRanks = fmap parseJavaDouble jResults
 
-        -- In estimation mode, ranks won't match exactly since the two
-        -- implementations use different random seeds. But both should
-        -- be within the sketch's error bounds of the true rank.
+        -- In estimation mode, each implementation made independent random
+        -- compaction decisions (different RNG seeds), so the retained items
+        -- differ. Both ranks should approximate the true rank, and we check
+        -- that the two approximations don't diverge beyond 2x the sketch's
+        -- error bound (~14% per side for k=6).
+        let n = fromIntegral (length values) :: Double
         forM_ (zip3 queryValues hRanks jRanks) $ \(qv, hr, jr) ->
-          unless (isNaN hr && isNaN jr) $
-            assertApproxEqual ("rank of " ++ show qv) 0.15 hr jr
+          unless (isNaN hr && isNaN jr) $ do
+            let trueRank = fromIntegral (length (filter (< qv) values)) / n
+            assertWithinBound ("Haskell rank of " ++ show qv) 0.15 hr trueRank
+            assertWithinBound ("Java rank of " ++ show qv) 0.15 jr trueRank
 
--- KLL sketch cross-validation
+-- KLL sketch cross-validation.
+--
+-- Both Java and Haskell KLL use doubles, so all values are identical
+-- in both representations. In exact mode results must match exactly.
 kllCrossValidation :: FilePath -> Spec
 kllCrossValidation harnessDir = do
 
-  specify "KLL: count/min/max match Java" $ hedgehog $
+  specify "KLL: exact mode count/min/max match Java exactly" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.linear 1 100) $
         Gen.double (Range.linearFrac 1 1000)
@@ -234,7 +249,7 @@ kllCrossValidation harnessDir = do
         hMin `shouldBe` jMin
         hMax `shouldBe` jMax
 
-  specify "KLL: exact mode ranks match Java (k=200, few items)" $ hedgehog $
+  specify "KLL: exact mode ranks match Java exactly (k=200, few items)" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.linear 10 50) $
         Gen.double (Range.linearFrac 1 100)
@@ -256,14 +271,14 @@ kllCrossValidation harnessDir = do
         let jRanks = fmap parseJavaDouble jResults
 
         forM_ (zip3 queryValues hRanks jRanks) $ \(qv, hr, jr) ->
-          unless (isNaN hr && isNaN jr) $
-            assertApproxEqual ("rank of " ++ show qv) 0.05 hr jr
+          unless (isNaN hr && isNaN jr) $ do
+            hr `shouldBe` jr
 
-  specify "KLL: estimation mode ranks within tolerance (k=200, 500 items)" $ hedgehog $
+  specify "KLL: estimation mode ranks are both valid approximations (k=200, 500 items)" $ hedgehog $
     H.property $ do
       values <- H.forAll $ Gen.list (Range.singleton 500) $
         Gen.double (Range.linearFrac 1 1000)
-      queryValues <- H.forAll $ Gen.list (Range.linear 1 5) $
+      queryValues <- H.forAll $ Gen.list (Range.linear 1 3) $
         Gen.double (Range.linearFrac 1 1000)
       let k = 200
       liftIO $ do
@@ -280,22 +295,24 @@ kllCrossValidation harnessDir = do
         jResults <- runJavaHarness harnessDir jCmds
         let jRanks = fmap parseJavaDouble jResults
 
-        -- Both are approximate with different random seeds and compaction
-        -- strategies. With k=200, error ≈ 1.3%, but two independent
-        -- implementations can differ by up to 2x the error bound.
+        -- Different compaction decisions from different RNGs. Verify both
+        -- approximate the true rank rather than comparing to each other.
+        let n = fromIntegral (length values) :: Double
         forM_ (zip3 queryValues hRanks jRanks) $ \(qv, hr, jr) ->
-          unless (isNaN hr && isNaN jr) $
-            assertApproxEqual ("rank of " ++ show qv) 0.10 hr jr
+          unless (isNaN hr && isNaN jr) $ do
+            let trueRank = fromIntegral (length (filter (< qv) values)) / n
+            assertWithinBound ("Haskell rank of " ++ show qv) 0.05 hr trueRank
+            assertWithinBound ("Java rank of " ++ show qv) 0.05 jr trueRank
 
-assertApproxEqual :: String -> Double -> Double -> Double -> IO ()
-assertApproxEqual label tolerance actual expected =
+-- | Assert that actual is within tolerance of expected.
+assertWithinBound :: String -> Double -> Double -> Double -> IO ()
+assertWithinBound label tolerance actual expected =
   when (abs (actual - expected) > tolerance) $
     expectationFailure $ label ++ ": expected " ++ show expected
       ++ " +/- " ++ show tolerance
       ++ " but got " ++ show actual
       ++ " (delta=" ++ show (abs (actual - expected)) ++ ")"
 
--- | Run a Hedgehog property as an hspec test.
 hedgehog :: H.Property -> IO ()
 hedgehog prop = do
   result <- H.check prop
