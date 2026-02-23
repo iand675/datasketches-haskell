@@ -406,23 +406,30 @@ grow this = do
 
 compress :: (PrimMonad m) => ReqSketch (PrimState m) -> m ()
 compress this = do
-  compactors <- getCompactors this
-  let compressionStep height compactor = do
-        buffSize <- DoubleBuffer.getCount =<< Compactor.getBuffer compactor
-        nominalCapacity <- Compactor.getNominalCapacity compactor
-        when (buffSize >= nominalCapacity) $ do
-          numLevels <- getNumLevels this
-          when (height + 1 >= numLevels) $ do
-            grow this
-          compactors' <- getCompactors this
-          cReturn <- Compactor.compact compactor
-          let topCompactor = compactors' ! (height + 1)
-          buff <- Compactor.getBuffer topCompactor
-          DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
-          modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
-          modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
-  imapM_ compressionStep compactors
+  numLevels <- getNumLevels this
+  compressLoop 0 numLevels
   writeMutVar (aux this) Nothing
+  where
+    compressLoop height numLvls
+      | height >= numLvls = pure ()
+      | otherwise = do
+          compactors' <- getCompactors this
+          let compactor = compactors' ! height
+          buffSize <- DoubleBuffer.getCount =<< Compactor.getBuffer compactor
+          nominalCapacity <- Compactor.getNominalCapacity compactor
+          when (buffSize >= nominalCapacity) $ do
+            currentLevels <- getNumLevels this
+            when (height + 1 >= currentLevels) $
+              grow this
+            compactors'' <- getCompactors this
+            cReturn <- Compactor.compact compactor
+            let topCompactor = compactors'' ! (height + 1)
+            buff <- Compactor.getBuffer topCompactor
+            DoubleBuffer.mergeSortIn buff $ Compactor.crDoubleBuffer cReturn
+            modifyURef (retainedItems this) (+ Compactor.crDeltaRetItems cReturn)
+            modifyURef (maxNominalCapacitiesSize this) (+ Compactor.crDeltaNominalSize cReturn)
+          newNumLevels <- getNumLevels this
+          compressLoop (height + 1) newNumLevels
 
 -- | Merge other sketch into this one.
 merge
@@ -447,7 +454,7 @@ merge this other = do
     otherMax <- maximum other
     when (isNaN thisMin || otherMin < thisMin) $ do
       writeURef (minValue this) otherMin
-    when (isNaN thisMax || otherMax < thisMax) $ do
+    when (isNaN thisMax || otherMax > thisMax) $ do
       writeURef (maxValue this) otherMax
     -- grow until this has at least as many compactors as other
     numRequiredCompactors <- getNumLevels other
@@ -472,8 +479,9 @@ merge this other = do
   where
     growUntil target = do
       numCompactors <- getNumLevels this
-      when (numCompactors < target) $
+      when (numCompactors < target) $ do
         grow this
+        growUntil target
 
 -- | Updates this sketch with the given item.
 insert :: (PrimMonad m) => ReqSketch (PrimState m) -> Double -> m ()

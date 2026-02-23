@@ -157,7 +157,7 @@ getCountWithCriterion buf@DoubleBuffer{..} value criterion = do
     then do
       capacity_ <- getCapacity buf
       pure (capacity_ - count_, capacity_ - 1)
-    else pure (0, count_)
+    else pure (0, count_ - 1)
 
   ix <- IS.find criterion vec low high value
   pure $! if ix == MUVector.length vec
