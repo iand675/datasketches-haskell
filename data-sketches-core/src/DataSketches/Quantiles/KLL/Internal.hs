@@ -13,6 +13,7 @@ module DataSketches.Quantiles.KLL.Internal
   , kllIsEmpty
   ) where
 
+import Control.DeepSeq (NFData(..))
 import Control.Monad (when, unless, forM_)
 import Control.Monad.Primitive
 import Data.Bits (shiftL, shiftR)
@@ -45,6 +46,8 @@ data KllSketch s = KllSketch
   , kllRng :: {-# UNPACK #-} !(Gen s)
   }
 
+instance NFData (KllSketch s) where rnf !_ = ()
+
 mkLevel :: PrimMonad m => Int -> m (KllLevel (PrimState m))
 mkLevel capacity = do
   buf <- MUVector.new (max capacity minLevelSize)
@@ -52,14 +55,16 @@ mkLevel capacity = do
 
 levelCount :: PrimMonad m => KllLevel (PrimState m) -> m Int
 levelCount = readURef . klCount
+{-# INLINE levelCount #-}
 
 levelBuffer :: PrimMonad m => KllLevel (PrimState m) -> m (MUVector.MVector (PrimState m) Double)
 levelBuffer = readMutVar . klBuffer
+{-# INLINE levelBuffer #-}
 
 levelAppend :: PrimMonad m => KllLevel (PrimState m) -> Double -> m ()
 levelAppend lvl val = do
-  cnt <- levelCount lvl
-  buf <- levelBuffer lvl
+  cnt <- readURef (klCount lvl)
+  buf <- readMutVar (klBuffer lvl)
   let cap = MUVector.length buf
   buf' <- if cnt >= cap
     then do
@@ -69,9 +74,11 @@ levelAppend lvl val = do
     else pure buf
   MUVector.unsafeWrite buf' cnt val
   writeURef (klCount lvl) (cnt + 1)
+{-# INLINE levelAppend #-}
 
 levelClear :: PrimMonad m => KllLevel (PrimState m) -> m ()
 levelClear lvl = writeURef (klCount lvl) 0
+{-# INLINE levelClear #-}
 
 -- Capacity of level h given numLevels total.
 -- depth = numLevels - 1 - h (counted from top)

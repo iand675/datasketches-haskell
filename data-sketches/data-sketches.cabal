@@ -120,12 +120,12 @@ benchmark bench
       StandaloneDeriving
       TypeFamilies
       TypeOperators
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -O2
   build-depends:
       base >=4.7 && <5
     , criterion
     , data-sketches
-    , data-sketches-core ==0.1.*
+    , data-sketches-core
     , ghc-prim
     , mtl
     , mwc-random

@@ -10,6 +10,7 @@ module DataSketches.Frequencies.CountMin.Internal
   , cmsDepth
   ) where
 
+import Control.DeepSeq (NFData(..))
 import Control.Monad (forM_)
 import Control.Monad.Primitive
 import Data.Bits (xor, shiftR, shiftL, (.&.))
@@ -29,6 +30,8 @@ data CountMinSketch s = CountMinSketch
   , cmsTotalN :: {-# UNPACK #-} !(URef s Word64)
   , cmsSeeds :: ![Word64]
   }
+
+instance NFData (CountMinSketch s) where rnf !_ = ()
 
 -- | Create a new Count-Min Sketch.
 -- epsilon: error tolerance (e.g. 0.001 for 0.1% error)
@@ -58,17 +61,18 @@ generateSeeds d =
         | otherwise = go (i + 1) (murmurMix (fromIntegral i * 0x9E3779B97F4A7C15 + 0x517CC1B727220A95) : acc)
   in reverse (go 0 [])
 
--- Murmur3 finalizer for mixing
 murmurMix :: Word64 -> Word64
 murmurMix h0 =
-  let h1 = (h0 `xor` (h0 `shiftR` 33)) * 0xFF51AFD7ED558CCD
-      h2 = (h1 `xor` (h1 `shiftR` 33)) * 0xC4CEB9FE1A85EC53
+  let !h1 = (h0 `xor` (h0 `shiftR` 33)) * 0xFF51AFD7ED558CCD
+      !h2 = (h1 `xor` (h1 `shiftR` 33)) * 0xC4CEB9FE1A85EC53
   in h2 `xor` (h2 `shiftR` 33)
+{-# INLINE murmurMix #-}
 
 hashItem :: Word64 -> Word64 -> Int -> Int
 hashItem seed item width =
-  let h = murmurMix (seed `xor` item)
+  let !h = murmurMix (seed `xor` item)
   in fromIntegral (h `mod` fromIntegral width)
+{-# INLINE hashItem #-}
 
 cmsWidth :: CountMinSketch s -> Int
 cmsWidth = cmsCols
@@ -79,6 +83,7 @@ cmsDepth = cmsRows
 -- | Insert an item (represented as a Word64 hash) into the sketch.
 cmsInsert :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> m ()
 cmsInsert cms item = cmsInsertN cms item 1
+{-# INLINE cmsInsert #-}
 
 -- | Insert an item with a given count.
 cmsInsertN :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> Word64 -> m ()

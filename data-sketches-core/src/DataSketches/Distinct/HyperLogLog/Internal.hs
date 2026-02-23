@@ -8,6 +8,7 @@ module DataSketches.Distinct.HyperLogLog.Internal
   , hllPrecision
   ) where
 
+import Control.DeepSeq (NFData(..))
 import Control.Monad (forM_, when)
 import Control.Monad.Primitive
 import Data.Bits
@@ -26,12 +27,14 @@ data HllSketch s = HllSketch
   , hllNumRegisters :: {-# UNPACK #-} !Int
   }
 
--- Murmur3-style 64-bit finalizer
+instance NFData (HllSketch s) where rnf !_ = ()
+
 murmurMix64 :: Word64 -> Word64
 murmurMix64 h0 =
-  let h1 = (h0 `xor` (h0 `shiftR` 33)) * 0xFF51AFD7ED558CCD
-      h2 = (h1 `xor` (h1 `shiftR` 33)) * 0xC4CEB9FE1A85EC53
+  let !h1 = (h0 `xor` (h0 `shiftR` 33)) * 0xFF51AFD7ED558CCD
+      !h2 = (h1 `xor` (h1 `shiftR` 33)) * 0xC4CEB9FE1A85EC53
   in h2 `xor` (h2 `shiftR` 33)
+{-# INLINE murmurMix64 #-}
 
 -- | Create a new HyperLogLog sketch with the given precision.
 -- precision p means 2^p registers are used.
@@ -54,24 +57,25 @@ hllPrecision = hllPrecisionBits
 
 -- | Insert an item (as a Word64 hash) into the sketch.
 hllInsert :: PrimMonad m => HllSketch (PrimState m) -> Word64 -> m ()
-hllInsert sk item = do
-  let hash = murmurMix64 item
-      p = hllPrecisionBits sk
-      registerIdx = fromIntegral (hash .&. (fromIntegral (hllNumRegisters sk) - 1))
-      -- Count leading zeros in the remaining (64-p) bits, starting from bit p
-      w = hash `shiftR` p
-      rho = countLeadingZerosW w (64 - p) + 1
-  currentVal <- MUVector.unsafeRead (hllRegisters sk) registerIdx
-  when (fromIntegral rho > currentVal) $
-    MUVector.unsafeWrite (hllRegisters sk) registerIdx (fromIntegral rho)
+hllInsert sk !item =
+  let !hash = murmurMix64 item
+      !p = hllPrecisionBits sk
+      !registerIdx = fromIntegral (hash .&. (fromIntegral (hllNumRegisters sk) - 1))
+      !w = hash `shiftR` p
+      !rho = countLeadingZerosW w (64 - p) + 1
+      !rhoW8 = fromIntegral rho :: Word8
+  in do
+    currentVal <- MUVector.unsafeRead (hllRegisters sk) registerIdx
+    when (rhoW8 > currentVal) $
+      MUVector.unsafeWrite (hllRegisters sk) registerIdx rhoW8
+{-# INLINE hllInsert #-}
 
--- Count leading zeros in the lower 'bits' bits of a word.
--- If all bits are zero, returns 'bits'.
 countLeadingZerosW :: Word64 -> Int -> Int
 countLeadingZerosW 0 bits = bits
 countLeadingZerosW w bits =
-  let clz = countTrailingZeros w
+  let !clz = countTrailingZeros w
   in min clz bits
+{-# INLINE countLeadingZerosW #-}
 
 -- | Estimate the cardinality (number of distinct items).
 hllEstimate :: PrimMonad m => HllSketch (PrimState m) -> m Double

@@ -84,7 +84,9 @@ benchmarks:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -O2
     dependencies:
     - criterion
     - data-sketches
-    # - prometheus-client
+    - data-sketches-core
+    - primitive

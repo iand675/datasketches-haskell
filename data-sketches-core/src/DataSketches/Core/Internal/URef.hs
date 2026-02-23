@@ -27,23 +27,18 @@ type IOURef = URef (PrimState IO)
 -- @since 0.0.2.0
 newURef :: (PrimMonad m, Unbox a) => a -> m (URef (PrimState m) a)
 newURef a = fmap URef (MUVector.replicate 1 a)
+{-# INLINE newURef #-}
 
--- | Read the value in a 'URef'
---
--- @since 0.0.2.0
 readURef :: (PrimMonad m, Unbox a) => URef (PrimState m) a -> m a
-readURef (URef v) = MUVector.read v 0
+readURef (URef v) = MUVector.unsafeRead v 0
+{-# INLINE readURef #-}
 
--- | Write a value into a 'URef'. Note that this action is strict, and
--- will force evalution of the value.
---
--- @since 0.0.2.0
 writeURef :: (PrimMonad m, Unbox a) => URef (PrimState m) a -> a -> m ()
 writeURef (URef v) = MUVector.unsafeWrite v 0
+{-# INLINE writeURef #-}
 
--- | Modify a value in a 'URef'. Note that this action is strict, and
--- will force evaluation of the result value.
---
--- @since 0.0.2.0
 modifyURef :: (PrimMonad m, Unbox a) => URef (PrimState m) a -> (a -> a) -> m ()
-modifyURef u f = readURef u >>= writeURef u . f
+modifyURef (URef v) f = do
+  !x <- MUVector.unsafeRead v 0
+  MUVector.unsafeWrite v 0 $! f x
+{-# INLINE modifyURef #-}

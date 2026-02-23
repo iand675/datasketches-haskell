@@ -95,16 +95,17 @@ copyBuffer buf@DoubleBuffer{..} = do
 append :: PrimMonad m => DoubleBuffer (PrimState m) -> Double -> m ()
 append buf@DoubleBuffer{..} x = do
   ensureSpace buf 1
+  count_ <- readURef count
   index <- if spaceAtBottom
-    then
-      (\capacity_ count_ -> capacity_ - count_ - 1)
-        <$> getCapacity buf
-        <*> getCount buf
-    else readURef count
-  modifyURef count (+ 1)
-  getVector buf >>= \vec -> MUVector.unsafeWrite vec index x
+    then do
+      capacity_ <- getCapacity buf
+      pure $! capacity_ - count_ - 1
+    else pure count_
+  writeURef count (count_ + 1)
+  vec <- getVector buf
+  MUVector.unsafeWrite vec index x
   writeURef sorted False
-{-# SCC append #-}
+{-# INLINE append #-}
 
 -- | Ensures that the capacity of this FloatBuffer is at least newCapacity.
 -- If newCapacity &lt; capacity(), no action is taken.
@@ -117,12 +118,12 @@ ensureSpace buf@DoubleBuffer{..} space = do
     let newCap = count_ + space + growthIncrement
     ensureCapacity buf newCap
 
-getVector :: (PrimMonad m, PrimState m ~ s) => DoubleBuffer s -> m (MUVector.MVector s Double)
+getVector :: PrimMonad m => DoubleBuffer (PrimState m) -> m (MUVector.MVector (PrimState m) Double)
 getVector = readMutVar . vec
 {-# INLINE getVector #-}
 
 getCapacity :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
-getCapacity = fmap MUVector.length . getVector
+getCapacity buf = MUVector.length <$> getVector buf
 {-# INLINE getCapacity #-}
 
 ensureCapacity :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m ()
@@ -211,15 +212,22 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
 
 getCount :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
 getCount = readURef . count
+{-# INLINE getCount #-}
 
 getSpace :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
-getSpace buf@DoubleBuffer{..} = (-) <$> getCapacity buf <*> getCount buf
+getSpace buf@DoubleBuffer{..} = do
+  cap <- getCapacity buf
+  cnt <- getCount buf
+  pure $! cap - cnt
+{-# INLINE getSpace #-}
 
 isEmpty :: PrimMonad m => DoubleBuffer (PrimState m) -> m Bool
 isEmpty buf = (== 0) <$> getCount buf
+{-# INLINE isEmpty #-}
 
 isSorted :: PrimMonad m => DoubleBuffer (PrimState m) -> m Bool
 isSorted = readURef . sorted
+{-# INLINE isSorted #-}
 
 -- | Sorts the active region
 sort :: PrimMonad m => DoubleBuffer (PrimState m) -> m ()
@@ -234,7 +242,7 @@ sort buf@DoubleBuffer{..} = do
     vec <- getVector buf
     sortByBounds compare vec start end
     writeURef sorted True
-{-# SCC sort #-}
+{-# INLINE sort #-}
 
 -- | Merges the incoming sorted buffer into this sorted buffer.
 mergeSortIn :: (PrimMonad m, HasCallStack) => DoubleBuffer (PrimState m) -> DoubleBuffer (PrimState m) -> m ()
