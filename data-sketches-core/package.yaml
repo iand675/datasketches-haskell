@@ -39,6 +39,20 @@ dependencies:
 
 library:
   source-dirs: src
+  exposed-modules:
+  - DataSketches.Core.Internal.URef
+  - DataSketches.Core.Snapshot
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch
+  - DataSketches.Quantiles.RelativeErrorQuantile.Types
+  - DataSketches.Quantiles.KLL.Internal
+  - DataSketches.Frequencies.CountMin.Internal
+  - DataSketches.Distinct.HyperLogLog.Internal
+  - DataSketches.Distinct.Theta.Internal
 
 tests:
   data-sketches-core-test:

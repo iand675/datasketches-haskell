@@ -1,6 +1,6 @@
 cabal-version: 1.18
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -30,6 +30,10 @@ source-repository head
 library
   exposed-modules:
       DataSketches.Quantiles.RelativeErrorQuantile
+      DataSketches.Quantiles.KLL
+      DataSketches.Frequencies.CountMin
+      DataSketches.Distinct.HyperLogLog
+      DataSketches.Distinct.Theta
   other-modules:
       Paths_data_sketches
   hs-source-dirs:

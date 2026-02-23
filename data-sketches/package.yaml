@@ -45,6 +45,12 @@ dependencies:
 
 library:
   source-dirs: src
+  exposed-modules:
+  - DataSketches.Quantiles.RelativeErrorQuantile
+  - DataSketches.Quantiles.KLL
+  - DataSketches.Frequencies.CountMin
+  - DataSketches.Distinct.HyperLogLog
+  - DataSketches.Distinct.Theta
 
 tests:
   data-sketches-test:
