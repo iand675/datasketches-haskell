@@ -16,12 +16,11 @@ module DataSketches.Quantiles.KLL.Internal
 import Control.DeepSeq (NFData(..))
 import Control.Monad (when, unless, forM_)
 import Control.Monad.Primitive
-import Data.Bits (shiftL, shiftR)
+import Data.Bits (shiftL)
 import Data.Primitive.MutVar
 import Data.Word
 import qualified Data.Vector.Unboxed as UVector
 import qualified Data.Vector.Unboxed.Mutable as MUVector
-import qualified Data.Vector as Vector
 import Data.Vector.Algorithms.Intro (sort)
 import System.Random.MWC (Gen, uniform, create)
 import DataSketches.Core.Internal.URef
@@ -29,110 +28,106 @@ import DataSketches.Core.Internal.URef
 minLevelSize :: Int
 minLevelSize = 2
 
-defaultM :: Int
-defaultM = 8
-
-data KllLevel s = KllLevel
-  { klBuffer :: {-# UNPACK #-} !(MutVar s (MUVector.MVector s Double))
-  , klCount :: {-# UNPACK #-} !(URef s Int)
-  }
-
+-- | KLL sketch using flat contiguous unboxed storage.
+--
+-- All item data is in a single unboxed mutable vector of Doubles (ByteArray#
+-- under the hood — same representation as Java's @double[]@). Level boundaries
+-- are tracked in a separate unboxed Int vector.
+--
+-- Level 0 grows leftward (prepend) so that insert is O(1) — no shifting.
+-- Higher levels occupy the right side of the array and are stable.
+--
+-- @
+-- items: [ free | level 0 items | level 1 items | level 2 items | ... ]
+--                 ^               ^               ^               ^
+--                 levels[0]       levels[1]       levels[2]       levels[numLevels]
+-- @
 data KllSketch s = KllSketch
   { kllK :: !Word32
   , kllTotalN :: {-# UNPACK #-} !(URef s Word64)
   , kllMinValue :: {-# UNPACK #-} !(URef s Double)
   , kllMaxValue :: {-# UNPACK #-} !(URef s Double)
-  , kllLevels :: {-# UNPACK #-} !(MutVar s (Vector.Vector (KllLevel s)))
+  , kllNumLevels :: {-# UNPACK #-} !(URef s Int)
+  , kllItems :: {-# UNPACK #-} !(MutVar s (MUVector.MVector s Double))
+  , kllLevels :: {-# UNPACK #-} !(MutVar s (MUVector.MVector s Int))
   , kllRng :: {-# UNPACK #-} !(Gen s)
   }
 
 instance NFData (KllSketch s) where rnf !_ = ()
 
-mkLevel :: PrimMonad m => Int -> m (KllLevel (PrimState m))
-mkLevel capacity = do
-  buf <- MUVector.new (max capacity minLevelSize)
-  KllLevel <$> newMutVar buf <*> newURef 0
-
-levelCount :: PrimMonad m => KllLevel (PrimState m) -> m Int
-levelCount = readURef . klCount
-{-# INLINE levelCount #-}
-
-levelBuffer :: PrimMonad m => KllLevel (PrimState m) -> m (MUVector.MVector (PrimState m) Double)
-levelBuffer = readMutVar . klBuffer
-{-# INLINE levelBuffer #-}
-
-levelAppend :: PrimMonad m => KllLevel (PrimState m) -> Double -> m ()
-levelAppend lvl val = do
-  cnt <- readURef (klCount lvl)
-  buf <- readMutVar (klBuffer lvl)
-  let cap = MUVector.length buf
-  buf' <- if cnt >= cap
-    then do
-      newBuf <- MUVector.grow buf cap
-      writeMutVar (klBuffer lvl) newBuf
-      pure newBuf
-    else pure buf
-  MUVector.unsafeWrite buf' cnt val
-  writeURef (klCount lvl) (cnt + 1)
-{-# INLINE levelAppend #-}
-
-levelClear :: PrimMonad m => KllLevel (PrimState m) -> m ()
-levelClear lvl = writeURef (klCount lvl) 0
-{-# INLINE levelClear #-}
-
--- Capacity of level h given numLevels total.
--- depth = numLevels - 1 - h (counted from top)
--- capacity = max(minLevelSize, round(k * (2/3)^depth))
 levelCapacity :: Word32 -> Int -> Int -> Int
 levelCapacity k numLevels h = max minLevelSize cap
   where
     depth = numLevels - 1 - h
     cap = round (fromIntegral k * (2.0/3.0 :: Double) ^^ depth)
+{-# INLINE levelCapacity #-}
 
 totalCapacity :: Word32 -> Int -> Int
-totalCapacity k numLevels =
-  let go !acc !h
-        | h >= numLevels = acc
-        | otherwise = go (acc + levelCapacity k numLevels h) (h + 1)
-  in go 0 0
+totalCapacity k numLevels = go 0 0
+  where
+    go !acc !h
+      | h >= numLevels = acc
+      | otherwise = go (acc + levelCapacity k numLevels h) (h + 1)
 
--- | Create a new KLL sketch.
--- k controls accuracy vs space. Default 200 gives ~1.3% error.
--- Must satisfy k >= 8.
 mkKllSketch :: PrimMonad m => Word32 -> m (KllSketch (PrimState m))
 mkKllSketch k = do
   unless (k >= 8) $ error "KLL sketch: k must be >= 8"
-  lvl0 <- mkLevel (fromIntegral k)
+  let initCap = fromIntegral k * 4
+  items <- MUVector.new initCap
+  -- levels[0] = initCap (level 0 starts at end, grows left)
+  -- levels[1] = initCap (level 0 is empty)
+  lvls <- MUVector.new 8
+  MUVector.unsafeWrite lvls 0 initCap
+  MUVector.unsafeWrite lvls 1 initCap
   KllSketch k
     <$> newURef 0
     <*> newURef (0/0)
     <*> newURef (0/0)
-    <*> newMutVar (Vector.singleton lvl0)
+    <*> newURef 1
+    <*> newMutVar items
+    <*> newMutVar lvls
     <*> create
 
 kllIsEmpty :: PrimMonad m => KllSketch (PrimState m) -> m Bool
 kllIsEmpty sk = (== 0) <$> readURef (kllTotalN sk)
+{-# INLINE kllIsEmpty #-}
 
 kllCount :: PrimMonad m => KllSketch (PrimState m) -> m Word64
 kllCount = readURef . kllTotalN
+{-# INLINE kllCount #-}
 
 kllMinimum :: PrimMonad m => KllSketch (PrimState m) -> m Double
 kllMinimum = readURef . kllMinValue
+{-# INLINE kllMinimum #-}
 
 kllMaximum :: PrimMonad m => KllSketch (PrimState m) -> m Double
 kllMaximum = readURef . kllMaxValue
+{-# INLINE kllMaximum #-}
+
+getNumLevels :: PrimMonad m => KllSketch (PrimState m) -> m Int
+getNumLevels = readURef . kllNumLevels
+{-# INLINE getNumLevels #-}
 
 kllRetainedItems :: PrimMonad m => KllSketch (PrimState m) -> m Int
 kllRetainedItems sk = do
   lvls <- readMutVar (kllLevels sk)
-  Vector.foldM (\acc lvl -> (+ acc) <$> levelCount lvl) 0 lvls
+  numLvls <- getNumLevels sk
+  lo <- MUVector.unsafeRead lvls 0
+  hi <- MUVector.unsafeRead lvls numLvls
+  pure $! hi - lo
+{-# INLINE kllRetainedItems #-}
 
-getNumLevels :: PrimMonad m => KllSketch (PrimState m) -> m Int
-getNumLevels = fmap Vector.length . readMutVar . kllLevels
+levelSize :: PrimMonad m => KllSketch (PrimState m) -> Int -> m Int
+levelSize sk h = do
+  lvls <- readMutVar (kllLevels sk)
+  lo <- MUVector.unsafeRead lvls h
+  hi <- MUVector.unsafeRead lvls (h + 1)
+  pure $! hi - lo
+{-# INLINE levelSize #-}
 
--- | Insert a value into the sketch.
+-- | Insert a value. Level 0 grows leftward (O(1) prepend).
 kllInsert :: PrimMonad m => KllSketch (PrimState m) -> Double -> m ()
-kllInsert sk val = do
+kllInsert sk !val = do
   unless (isNaN val) $ do
     empty <- kllIsEmpty sk
     if empty
@@ -144,10 +139,40 @@ kllInsert sk val = do
         mx <- readURef (kllMaxValue sk)
         when (val < mn) $ writeURef (kllMinValue sk) val
         when (val > mx) $ writeURef (kllMaxValue sk) val
+
     lvls <- readMutVar (kllLevels sk)
-    levelAppend (Vector.head lvls) val
+    lvl0Start <- MUVector.unsafeRead lvls 0
+    items <- readMutVar (kllItems sk)
+
+    if lvl0Start > 0
+      then do
+        let !newStart = lvl0Start - 1
+        MUVector.unsafeWrite items newStart val
+        MUVector.unsafeWrite lvls 0 newStart
+      else do
+        -- No free space at the beginning; grow the array
+        let oldCap = MUVector.length items
+            growBy = max oldCap (fromIntegral (kllK sk))
+            newCap = oldCap + growBy
+        newItems <- MUVector.new newCap
+        numLvls <- getNumLevels sk
+        endAll <- MUVector.unsafeRead lvls numLvls
+        let usedLen = endAll -- items are at [0, endAll)
+        -- Copy old items to the end of new array, leaving growBy free at start
+        MUVector.copy (MUVector.slice growBy usedLen newItems) (MUVector.slice 0 usedLen items)
+        writeMutVar (kllItems sk) newItems
+        -- Shift all level boundaries by growBy
+        forM_ [0 .. numLvls] $ \i ->
+          MUVector.unsafeModify lvls (+ growBy) i
+        -- Now prepend the new item
+        newLvl0 <- MUVector.unsafeRead lvls 0
+        let !newStart = newLvl0 - 1
+        MUVector.unsafeWrite newItems newStart val
+        MUVector.unsafeWrite lvls 0 newStart
+
     modifyURef (kllTotalN sk) (+ 1)
     compressIfNeeded sk
+{-# INLINE kllInsert #-}
 
 compressIfNeeded :: PrimMonad m => KllSketch (PrimState m) -> m ()
 compressIfNeeded sk = do
@@ -157,88 +182,115 @@ compressIfNeeded sk = do
   when (retained >= cap) $ kllCompress sk
 
 kllCompress :: PrimMonad m => KllSketch (PrimState m) -> m ()
-kllCompress sk = do
-  numLvls <- getNumLevels sk
-  let k = kllK sk
-  compressLoop 0 numLvls k
+kllCompress sk = compressLoop 0
   where
-    compressLoop !h !numLvls !k
-      | h >= numLvls = pure ()
-      | otherwise = do
-          lvls <- readMutVar (kllLevels sk)
-          let lvl = lvls Vector.! h
-          cnt <- levelCount lvl
-          let cap = levelCapacity k numLvls h
-          if cnt >= cap && cnt >= 2
-            then do
-              currentNumLvls <- getNumLevels sk
-              when (h + 1 >= currentNumLvls) $ addLevel sk
-              updatedNumLvls <- getNumLevels sk
-              compactLevel sk h
-              compressLoop (h + 1) updatedNumLvls k
-            else compressLoop (h + 1) numLvls k
+    k = kllK sk
+    compressLoop !h = do
+      numLvls <- getNumLevels sk
+      when (h < numLvls) $ do
+        sz <- levelSize sk h
+        let cap = levelCapacity k numLvls h
+        if sz >= cap && sz >= 2
+          then do
+            when (h + 1 >= numLvls) $ addLevel sk
+            compactLevel sk h
+            compressLoop (h + 1)
+          else compressLoop (h + 1)
 
 addLevel :: PrimMonad m => KllSketch (PrimState m) -> m ()
 addLevel sk = do
   numLvls <- getNumLevels sk
-  let cap = levelCapacity (kllK sk) (numLvls + 1) numLvls
-  newLvl <- mkLevel cap
-  modifyMutVar' (kllLevels sk) (`Vector.snoc` newLvl)
+  let newNumLvls = numLvls + 1
+  lvls <- readMutVar (kllLevels sk)
+  let lvlsCap = MUVector.length lvls
+  lvls' <- if newNumLvls + 1 > lvlsCap
+    then do
+      new <- MUVector.grow lvls lvlsCap
+      writeMutVar (kllLevels sk) new
+      pure new
+    else pure lvls
+  end <- MUVector.unsafeRead lvls' numLvls
+  MUVector.unsafeWrite lvls' newNumLvls end
+  writeURef (kllNumLevels sk) newNumLvls
 
+-- | Compact level h: sort, randomly promote half to level h+1, discard rest.
+-- In the flat layout, level h items are at [levels[h], levels[h+1]).
+-- After compaction: level h shrinks, level h+1 grows by numPromoted.
 compactLevel :: PrimMonad m => KllSketch (PrimState m) -> Int -> m ()
 compactLevel sk h = do
   lvls <- readMutVar (kllLevels sk)
-  let srcLvl = lvls Vector.! h
-      dstLvl = lvls Vector.! (h + 1)
-  cnt <- levelCount srcLvl
-  buf <- levelBuffer srcLvl
+  items <- readMutVar (kllItems sk)
+  lo <- MUVector.unsafeRead lvls h
+  hi <- MUVector.unsafeRead lvls (h + 1)
+  let !sz = hi - lo
 
-  sortByBoundsM buf 0 cnt
+  -- Sort level h in place
+  sort (MUVector.slice lo sz items)
 
-  -- Randomly choose evens or odds to promote; discard the rest
+  -- Randomly pick evens or odds to promote
   coin <- uniform (kllRng sk)
-  let startIdx = if coin then 1 else 0
+  let !startIdx = if coin then 1 else 0
+      !numPromoted = (sz - startIdx + 1) `div` 2
+      !numDiscarded = sz - numPromoted
 
-  promoteLoop buf startIdx cnt dstLvl
+  -- Write promoted items contiguously at [lo, lo + numPromoted)
+  let writePromoted !srcOff !dstOff
+        | srcOff >= sz = pure ()
+        | otherwise = do
+            v <- MUVector.unsafeRead items (lo + srcOff)
+            MUVector.unsafeWrite items (lo + dstOff) v
+            writePromoted (srcOff + 2) (dstOff + 1)
+  writePromoted startIdx 0
 
-  -- Compacted items are discarded from this level
-  levelClear srcLvl
-  where
-    sortByBoundsM v lo hi = do
-      let slice = MUVector.slice lo (hi - lo) v
-      sort slice
+  -- Now items[lo .. lo+numPromoted-1] = promoted items.
+  -- items[lo+numPromoted .. hi-1] = garbage (old data).
+  -- We need to remove the discarded region and let the promoted items
+  -- become part of level h+1.
 
-    promoteLoop buf !i !n dstLvl
-      | i >= n = pure ()
-      | otherwise = do
-          val <- MUVector.unsafeRead buf i
-          levelAppend dstLvl val
-          promoteLoop buf (i + 2) n dstLvl
+  -- Shift all items after level h left by numDiscarded to close the gap.
+  numLvls <- getNumLevels sk
+  endAll <- MUVector.unsafeRead lvls numLvls
+  let srcStart = hi
+      dstStart = lo + numPromoted
+      moveLen = endAll - hi
+  when (moveLen > 0 && srcStart /= dstStart) $
+    MUVector.move
+      (MUVector.slice dstStart moveLen items)
+      (MUVector.slice srcStart moveLen items)
 
--- | Get all weighted items from the sketch for quantile computation.
--- Returns (value, weight) pairs sorted by value.
+  -- Update level boundaries.
+  -- Level h is now empty: levels[h+1] = levels[h]
+  -- Promoted items join level h+1: levels[h+1] stays at lo (= old levels[h])
+  -- Everything after shifts left by numDiscarded.
+  MUVector.unsafeWrite lvls (h + 1) lo
+  forM_ [h + 2 .. numLvls] $ \i ->
+    MUVector.unsafeModify lvls (subtract numDiscarded) i
+
 getWeightedItems :: PrimMonad m => KllSketch (PrimState m) -> m (UVector.Vector (Double, Word64))
 getWeightedItems sk = do
+  numLvls <- getNumLevels sk
+  retained <- kllRetainedItems sk
+  result <- MUVector.new retained
+  items <- readMutVar (kllItems sk)
   lvls <- readMutVar (kllLevels sk)
-  totalRetained <- kllRetainedItems sk
-  items <- MUVector.new totalRetained
-  let fillLevel !writeIdx !h lvl = do
-        cnt <- levelCount lvl
-        buf <- levelBuffer lvl
-        let weight = (1 :: Word64) `shiftL` h
-            go !i !w
-              | i >= cnt = pure w
-              | otherwise = do
-                  val <- MUVector.unsafeRead buf i
-                  MUVector.unsafeWrite items w (val, weight)
-                  go (i + 1) (w + 1)
-        go 0 writeIdx
-  finalIdx <- Vector.ifoldM fillLevel 0 lvls
-  frozen <- UVector.unsafeFreeze (MUVector.slice 0 finalIdx items)
-  let sorted = UVector.modify sort frozen
-  pure sorted
+  let fillLevel !writeIdx !h
+        | h >= numLvls = pure writeIdx
+        | otherwise = do
+            lo <- MUVector.unsafeRead lvls h
+            hi <- MUVector.unsafeRead lvls (h + 1)
+            let !weight = (1 :: Word64) `shiftL` h
+            let go !i !w
+                  | i >= hi = pure w
+                  | otherwise = do
+                      val <- MUVector.unsafeRead items i
+                      MUVector.unsafeWrite result w (val, weight)
+                      go (i + 1) (w + 1)
+            newIdx <- go lo writeIdx
+            fillLevel newIdx (h + 1)
+  finalIdx <- fillLevel 0 0
+  frozen <- UVector.unsafeFreeze (MUVector.slice 0 finalIdx result)
+  pure $ UVector.modify sort frozen
 
--- | Get the approximate quantile value for a given normalized rank [0, 1].
 kllQuantile :: PrimMonad m => KllSketch (PrimState m) -> Double -> m Double
 kllQuantile sk normRank = do
   empty <- kllIsEmpty sk
@@ -250,10 +302,10 @@ kllQuantile sk normRank = do
       totalN <- kllCount sk
       items <- getWeightedItems sk
       let targetWeight = floor (normRank * fromIntegral totalN) :: Word64
-      pure (findQuantile items targetWeight totalN)
+      pure (findQuantile items targetWeight)
 
-findQuantile :: UVector.Vector (Double, Word64) -> Word64 -> Word64 -> Double
-findQuantile items targetWeight totalN
+findQuantile :: UVector.Vector (Double, Word64) -> Word64 -> Double
+findQuantile items targetWeight
   | UVector.null items = 0/0
   | otherwise =
       let cumWeights = UVector.postscanl' (\acc (_, w) -> acc + w) 0 items
@@ -263,7 +315,6 @@ findQuantile items targetWeight totalN
             | otherwise = go (i + 1)
       in go 0
 
--- | Get the approximate normalized rank of a value.
 kllRank :: PrimMonad m => KllSketch (PrimState m) -> Double -> m Double
 kllRank sk value = do
   empty <- kllIsEmpty sk
@@ -272,13 +323,12 @@ kllRank sk value = do
     else do
       totalN <- kllCount sk
       items <- getWeightedItems sk
-      let countBelow = UVector.foldl'
+      let !countBelow = UVector.foldl'
             (\acc (v, w) -> if v < value then acc + w else acc)
             0
             items
       pure (fromIntegral countBelow / fromIntegral totalN)
 
--- | Merge the second sketch into the first.
 kllMerge :: PrimMonad m => KllSketch (PrimState m) -> KllSketch (PrimState m) -> m ()
 kllMerge this other = do
   otherEmpty <- kllIsEmpty other
@@ -296,23 +346,75 @@ kllMerge this other = do
     when (isNaN thisMax || otherMax > thisMax) $
       writeURef (kllMaxValue this) otherMax
 
+    -- Insert all retained items from other into this
+    otherNumLvls <- getNumLevels other
+    otherItems <- readMutVar (kllItems other)
     otherLvls <- readMutVar (kllLevels other)
-    Vector.iforM_ otherLvls $ \h otherLvl -> do
-      otherCnt <- levelCount otherLvl
-      when (otherCnt > 0) $ do
-        thisNumLvls <- getNumLevels this
-        growUntil this (h + 1)
-        thisLvls <- readMutVar (kllLevels this)
-        let thisLvl = thisLvls Vector.! h
-        otherBuf <- levelBuffer otherLvl
-        forM_ [0..otherCnt - 1] $ \i -> do
-          val <- MUVector.unsafeRead otherBuf i
-          levelAppend thisLvl val
+
+    forM_ [0 .. otherNumLvls - 1] $ \h -> do
+      lo <- MUVector.unsafeRead otherLvls h
+      hi <- MUVector.unsafeRead otherLvls (h + 1)
+      forM_ [lo .. hi - 1] $ \i -> do
+        val <- MUVector.unsafeRead otherItems i
+        kllInsertAtLevel this h val
 
     compressIfNeeded this
-  where
-    growUntil sk target = do
-      n <- getNumLevels sk
-      when (n < target) $ do
-        addLevel sk
-        growUntil sk target
+
+-- Insert a value at a specific level. For level 0, prepend. For higher levels, append.
+kllInsertAtLevel :: PrimMonad m => KllSketch (PrimState m) -> Int -> Double -> m ()
+kllInsertAtLevel sk 0 val = do
+  -- Same as regular insert without min/max/count tracking
+  lvls <- readMutVar (kllLevels sk)
+  lvl0Start <- MUVector.unsafeRead lvls 0
+  items <- readMutVar (kllItems sk)
+  if lvl0Start > 0
+    then do
+      let !newStart = lvl0Start - 1
+      MUVector.unsafeWrite items newStart val
+      MUVector.unsafeWrite lvls 0 newStart
+    else do
+      growAndShift sk
+      kllInsertAtLevel sk 0 val
+kllInsertAtLevel sk h val = do
+  -- For higher levels, append at the end of level h
+  -- This requires shifting levels h+1.. right by 1
+  lvls <- readMutVar (kllLevels sk)
+  numLvls <- getNumLevels sk
+  endAll <- MUVector.unsafeRead lvls numLvls
+  items <- readMutVar (kllItems sk)
+  let cap = MUVector.length items
+  items' <- if endAll >= cap
+    then do
+      let newCap = max (cap * 2) (endAll + 1)
+      new <- MUVector.grow items (newCap - cap)
+      writeMutVar (kllItems sk) new
+      pure new
+    else pure items
+  -- Shift items after level h right by 1
+  hiH <- MUVector.unsafeRead lvls (h + 1)
+  let moveLen = endAll - hiH
+  when (moveLen > 0) $
+    MUVector.move
+      (MUVector.slice (hiH + 1) moveLen items')
+      (MUVector.slice hiH moveLen items')
+  MUVector.unsafeWrite items' hiH val
+  -- Update boundaries
+  forM_ [h + 1 .. numLvls] $ \i ->
+    MUVector.unsafeModify lvls (+ 1) i
+
+growAndShift :: PrimMonad m => KllSketch (PrimState m) -> m ()
+growAndShift sk = do
+  items <- readMutVar (kllItems sk)
+  lvls <- readMutVar (kllLevels sk)
+  numLvls <- getNumLevels sk
+  let oldCap = MUVector.length items
+      growBy = max oldCap (fromIntegral (kllK sk))
+      newCap = oldCap + growBy
+  newItems <- MUVector.new newCap
+  endAll <- MUVector.unsafeRead lvls numLvls
+  lo0 <- MUVector.unsafeRead lvls 0
+  let usedLen = endAll - lo0
+  MUVector.copy (MUVector.slice (lo0 + growBy) usedLen newItems) (MUVector.slice lo0 usedLen items)
+  writeMutVar (kllItems sk) newItems
+  forM_ [0 .. numLvls] $ \i ->
+    MUVector.unsafeModify lvls (+ growBy) i
