@@ -1,5 +1,5 @@
 name:                data-sketches
-version:             0.3.1.0
+version:             0.4.0.0
 github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
@@ -41,7 +41,7 @@ dependencies:
 - primitive
 - vector-algorithms
 - ghc-prim
-- data-sketches-core == 0.1.*
+- data-sketches-core == 0.2.*
 
 library:
   source-dirs: src
