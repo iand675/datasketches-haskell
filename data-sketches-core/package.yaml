@@ -42,6 +42,9 @@ library:
   c-sources:
   - cbits/sketches.c
   - cbits/kll.c
+  - cbits/hll.c
+  - cbits/countmin.c
+  - cbits/theta.c
   cc-options:
   - -O2
   exposed-modules:

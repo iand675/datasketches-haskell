@@ -68,5 +68,7 @@ spec = describe "Count-Min Sketch" $ do
 
   specify "dimensions match epsilon and delta" $ do
     sk <- CM.mkCountMinSketch 0.001 0.01
-    CM.width sk `shouldSatisfy` (> 0)
-    CM.depth sk `shouldSatisfy` (> 0)
+    w <- CM.width sk
+    w `shouldSatisfy` (> 0)
+    d <- CM.depth sk
+    d `shouldSatisfy` (> 0)

@@ -55,6 +55,9 @@ library
   c-sources:
       cbits/sketches.c
       cbits/kll.c
+      cbits/hll.c
+      cbits/countmin.c
+      cbits/theta.c
   build-depends:
       base >=4.7 && <5
     , deepseq

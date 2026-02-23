@@ -32,7 +32,7 @@ module DataSketches.Distinct.HyperLogLog
   , precision
   ) where
 
-import Control.Monad.Primitive (PrimMonad(PrimState))
+import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Word (Word64)
 import DataSketches.Distinct.HyperLogLog.Internal
 
@@ -49,5 +49,5 @@ merge :: PrimMonad m => HllSketch (PrimState m) -> HllSketch (PrimState m) -> m 
 merge = hllMerge
 
 -- | Get the precision (log2 of register count) of the sketch.
-precision :: HllSketch s -> Int
+precision :: PrimMonad m => HllSketch (PrimState m) -> m Int
 precision = hllPrecision

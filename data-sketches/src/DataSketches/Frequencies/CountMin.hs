@@ -29,7 +29,7 @@ module DataSketches.Frequencies.CountMin
   , depth
   ) where
 
-import Control.Monad.Primitive (PrimMonad(PrimState))
+import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Word (Word64)
 import DataSketches.Frequencies.CountMin.Internal
 
@@ -51,9 +51,9 @@ merge :: PrimMonad m => CountMinSketch (PrimState m) -> CountMinSketch (PrimStat
 merge = cmsMerge
 
 -- | Number of columns in the sketch.
-width :: CountMinSketch s -> Int
+width :: PrimMonad m => CountMinSketch (PrimState m) -> m Int
 width = cmsWidth
 
 -- | Number of rows (hash functions) in the sketch.
-depth :: CountMinSketch s -> Int
+depth :: PrimMonad m => CountMinSketch (PrimState m) -> m Int
 depth = cmsDepth

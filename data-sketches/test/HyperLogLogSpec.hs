@@ -69,4 +69,5 @@ spec = describe "HyperLogLog Sketch" $ do
 
   specify "precision is reported correctly" $ do
     sk <- HLL.mkHllSketch 14
-    HLL.precision sk `shouldBe` 14
+    p <- HLL.precision sk
+    p `shouldBe` 14
