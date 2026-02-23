@@ -69,6 +69,10 @@ tests:
     - QuickCheck
     - statistics
     - pretty-show
+    - hedgehog
+    - process
+    - directory
+    - temporary
     # build-tool-depends:
     # - hspec-discover:hspec-discover
 

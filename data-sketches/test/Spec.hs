@@ -9,6 +9,7 @@ import qualified HyperLogLogSpec
 import qualified ThetaSpec
 import qualified CountMinSpec
 import qualified BugFixSpec
+import qualified CrossValidationSpec
 import System.Environment
 import Test.HSpec.JUnit
 import Test.Hspec.Runner
@@ -34,4 +35,5 @@ main =
       describe "Theta" ThetaSpec.spec
       describe "CountMin" CountMinSpec.spec
       describe "BugFix" BugFixSpec.spec
+      describe "CrossValidation" CrossValidationSpec.spec
 
