@@ -35,7 +35,8 @@ import Data.Primitive.MutVar
 import qualified Data.Vector.Unboxed as UVector
 import qualified Data.Vector.Unboxed.Mutable as MUVector
 import DataSketches.Core.Internal.URef
-    ( URef, newURef, readURef, writeURef, modifyURef )
+    ( URef, newURef, readURef, writeURef, modifyURef
+    , MutableFields, newMutableFields, readField, writeField, modifyField )
 import Data.Vector.Algorithms.Intro (sortByBounds)
 import GHC.Stack ( HasCallStack )
 import System.IO.Unsafe ()
@@ -44,13 +45,20 @@ import Control.Exception ( Exception, throw )
 import DataSketches.Core.Snapshot ( TakeSnapshot(..) )
 
 -- | A special buffer of floats specifically designed to support the ReqCompactor class.
+--
+-- Mutable scalars (count, sorted flag) are packed into a single
+-- 'MutableFields' to avoid per-field MutableByteArray# overhead.
+-- Field layout: index 0 = count (Int), index 1 = sorted (Int, 0 or 1).
 data DoubleBuffer s = DoubleBuffer
   { vec :: {-# UNPACK #-} !(MutVar s (MUVector.MVector s Double))
-  , count :: {-# UNPACK #-} !(URef s Int)
-  , sorted :: {-# UNPACK #-} !(URef s Bool)
+  , dbFields :: {-# UNPACK #-} !(MutableFields s)
   , growthIncrement :: {-# UNPACK #-} !Int
   , spaceAtBottom :: !Bool
   }
+
+dbCountIx, dbSortedIx :: Int
+dbCountIx = 0
+dbSortedIx = 1
 
 data DoubleBufferSnapshot = DoubleBufferSnapshot
     { dbSnapshotVec :: UVector.Vector Double
@@ -63,12 +71,11 @@ data DoubleBufferSnapshot = DoubleBufferSnapshot
 instance TakeSnapshot DoubleBuffer where
   type Snapshot DoubleBuffer = DoubleBufferSnapshot
 
-  takeSnapshot DoubleBuffer{..} = DoubleBufferSnapshot
-    <$> (readMutVar vec >>= UVector.freeze)
-    <*> readURef count
-    <*> readURef sorted
-    <*> pure growthIncrement
-    <*> pure spaceAtBottom
+  takeSnapshot DoubleBuffer{..} = do
+    v <- readMutVar vec >>= UVector.freeze
+    cnt <- readField dbFields dbCountIx
+    srt <- readField dbFields dbSortedIx
+    pure $ DoubleBufferSnapshot v cnt (srt /= (0 :: Int)) growthIncrement spaceAtBottom
 
 type Capacity = Int
 type GrowthIncrement = Int
@@ -79,15 +86,20 @@ type SpaceAtBottom = Bool
 mkBuffer :: PrimMonad m => Capacity -> GrowthIncrement -> SpaceAtBottom -> m (DoubleBuffer (PrimState m))
 mkBuffer capacity_ growthIncrement spaceAtBottom = do
   vec <- newMutVar =<< MUVector.new capacity_
-  count <- newURef 0
-  sorted <- newURef True
+  -- Pack count and sorted into 2 Int-sized slots
+  dbFields <- newMutableFields (2 * 8)
+  writeField dbFields dbCountIx (0 :: Int)
+  writeField dbFields dbSortedIx (1 :: Int)
   pure $ DoubleBuffer{..}
 
 copyBuffer :: PrimMonad m => DoubleBuffer (PrimState m) -> m (DoubleBuffer (PrimState m))
 copyBuffer buf@DoubleBuffer{..} = do
   vec <- newMutVar =<< MUVector.clone =<< getVector buf
-  count <- newURef =<< getCount buf
-  sorted <- newURef =<< readURef sorted
+  dbFields <- newMutableFields (2 * 8)
+  cnt <- getCount buf
+  srt <- isSorted buf
+  writeField dbFields dbCountIx cnt
+  writeField dbFields dbSortedIx (if srt then 1 :: Int else 0)
   pure $ DoubleBuffer {..}
 
 -- | Appends the given item to the active array and increments the active count.
@@ -95,26 +107,25 @@ copyBuffer buf@DoubleBuffer{..} = do
 append :: PrimMonad m => DoubleBuffer (PrimState m) -> Double -> m ()
 append buf@DoubleBuffer{..} x = do
   ensureSpace buf 1
-  count_ <- readURef count
+  count_ <- getCount buf
   index <- if spaceAtBottom
     then do
       capacity_ <- getCapacity buf
       pure $! capacity_ - count_ - 1
     else pure count_
-  writeURef count (count_ + 1)
-  vec <- getVector buf
-  MUVector.unsafeWrite vec index x
-  writeURef sorted False
+  writeField dbFields dbCountIx (count_ + 1)
+  v <- getVector buf
+  MUVector.unsafeWrite v index x
+  writeField dbFields dbSortedIx (0 :: Int)
 {-# INLINE append #-}
 
 -- | Ensures that the capacity of this FloatBuffer is at least newCapacity.
 -- If newCapacity &lt; capacity(), no action is taken.
 ensureSpace :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m ()
 ensureSpace buf@DoubleBuffer{..} space = do
-  count_ <- readURef count
+  count_ <- getCount buf
   capacity_ <- getCapacity buf
-  let notEnoughSpace = count_ + space > capacity_
-  when notEnoughSpace $ do
+  when (count_ + space > capacity_) $ do
     let newCap = count_ + space + growthIncrement
     ensureCapacity buf newCap
 
@@ -186,13 +197,13 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
         MUVector.unsafeWrite out j =<< MUVector.unsafeRead vec (i + odd)
         go vec out (i + 2) (j + 1)
       else do
-        count <- newURef (MUVector.length out)
-        sorted <- newURef True
+        dbFields <- newMutableFields (2 * 8)
+        writeField dbFields dbCountIx (MUVector.length out)
+        writeField dbFields dbSortedIx (1 :: Int)
         vec <- newMutVar out
         pure DoubleBuffer
           { vec = vec
-          , count = count
-          , sorted = sorted
+          , dbFields = dbFields
           , growthIncrement = 0
           , spaceAtBottom = spaceAtBottom
           }
@@ -211,7 +222,7 @@ getEvensOrOdds buf@DoubleBuffer{..} startOffset endOffset odds = do
   MUVector.read vec index
 
 getCount :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
-getCount = readURef . count
+getCount DoubleBuffer{..} = readField dbFields dbCountIx
 {-# INLINE getCount #-}
 
 getSpace :: PrimMonad m => DoubleBuffer (PrimState m) -> m Int
@@ -226,7 +237,7 @@ isEmpty buf = (== 0) <$> getCount buf
 {-# INLINE isEmpty #-}
 
 isSorted :: PrimMonad m => DoubleBuffer (PrimState m) -> m Bool
-isSorted = readURef . sorted
+isSorted DoubleBuffer{..} = (/= (0 :: Int)) <$> readField dbFields dbSortedIx
 {-# INLINE isSorted #-}
 
 -- | Sorts the active region
@@ -239,9 +250,9 @@ sort buf@DoubleBuffer{..} = do
     let (start, end) = if spaceAtBottom
           then (capacity_ - count_, capacity_)
           else (0, count_)
-    vec <- getVector buf
-    sortByBounds compare vec start end
-    writeURef sorted True
+    v <- getVector buf
+    sortByBounds compare v start end
+    writeField dbFields dbSortedIx (1 :: Int)
 {-# INLINE sort #-}
 
 -- | Merges the incoming sorted buffer into this sorted buffer.
@@ -275,8 +286,8 @@ mergeSortIn this bufIn = do
       let k = totalLength
       mergeDownwards thisBuf thatBuf i j (k - 1)
 
-  modifyURef (count this) (+ bufInLen)
-  writeURef (sorted this) True
+  modifyField (dbFields this) dbCountIx (+ bufInLen)
+  writeField (dbFields this) dbSortedIx (1 :: Int)
   pure ()
   where
     mergeUpwards thisBuf thatBuf capacity_ bufInCapacity_ = go
@@ -326,4 +337,4 @@ mergeSortIn this bufIn = do
 {-# SCC mergeSortIn #-}
 
 trimCount :: PrimMonad m => DoubleBuffer (PrimState m) -> Int -> m ()
-trimCount DoubleBuffer{..} newCount = modifyURef count (\oldCount -> if newCount < oldCount then newCount else oldCount)
+trimCount DoubleBuffer{..} newCount = modifyField dbFields dbCountIx (\oldCount -> if newCount < oldCount then newCount else oldCount)
