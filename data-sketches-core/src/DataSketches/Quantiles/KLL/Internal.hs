@@ -186,18 +186,16 @@ compactLevel sk h = do
   cnt <- levelCount srcLvl
   buf <- levelBuffer srcLvl
 
-  -- Sort the active region
   sortByBoundsM buf 0 cnt
 
-  -- Randomly choose evens or odds
+  -- Randomly choose evens or odds to promote; discard the rest
   coin <- uniform (kllRng sk)
   let startIdx = if coin then 1 else 0
 
-  -- Promote every other element to the next level
   promoteLoop buf startIdx cnt dstLvl
 
-  -- Keep the other elements at this level
-  keepLoop buf srcLvl cnt (if coin then 0 else 1)
+  -- Compacted items are discarded from this level
+  levelClear srcLvl
   where
     sortByBoundsM v lo hi = do
       let slice = MUVector.slice lo (hi - lo) v
@@ -209,16 +207,6 @@ compactLevel sk h = do
           val <- MUVector.unsafeRead buf i
           levelAppend dstLvl val
           promoteLoop buf (i + 2) n dstLvl
-
-    keepLoop buf srcLvl cnt startIdx = do
-      tmpBuf <- levelBuffer srcLvl
-      let writeKeep !j !writeIdx
-            | j >= cnt = writeURef (klCount srcLvl) writeIdx
-            | otherwise = do
-                val <- MUVector.unsafeRead buf j
-                MUVector.unsafeWrite tmpBuf writeIdx val
-                writeKeep (j + 2) (writeIdx + 1)
-      writeKeep startIdx 0
 
 -- | Get all weighted items from the sketch for quantile computation.
 -- Returns (value, weight) pairs sorted by value.

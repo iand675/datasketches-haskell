@@ -62,6 +62,7 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - data-sketches
+    - data-sketches-core
     - hspec
     - hspec-junit-formatter
     # - hspec-discover

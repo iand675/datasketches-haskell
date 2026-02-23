@@ -78,7 +78,7 @@ cmsDepth = cmsRows
 
 -- | Insert an item (represented as a Word64 hash) into the sketch.
 cmsInsert :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> m ()
-cmsInsert = flip cmsInsertN 1
+cmsInsert cms item = cmsInsertN cms item 1
 
 -- | Insert an item with a given count.
 cmsInsertN :: PrimMonad m => CountMinSketch (PrimState m) -> Word64 -> Word64 -> m ()

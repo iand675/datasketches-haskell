@@ -62,10 +62,15 @@ test-suite data-sketches-test
   main-is: Spec.hs
   other-modules:
       AuxiliarySpec
+      BugFixSpec
       CompactorSpec
+      CountMinSpec
       DoubleBufferSpec
+      HyperLogLogSpec
+      KllSpec
       ProofCheckSpec
       RelativeErrorQuantileSpec
+      ThetaSpec
       Paths_data_sketches
   hs-source-dirs:
       test
@@ -82,7 +87,7 @@ test-suite data-sketches-test
       QuickCheck
     , base >=4.7 && <5
     , data-sketches
-    , data-sketches-core ==0.1.*
+    , data-sketches-core
     , ghc-prim
     , hspec
     , hspec-junit-formatter
