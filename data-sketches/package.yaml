@@ -1,5 +1,5 @@
 name:                data-sketches
-version:             0.3.1.0
+version:             0.4.0.0
 github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
@@ -41,10 +41,16 @@ dependencies:
 - primitive
 - vector-algorithms
 - ghc-prim
-- data-sketches-core == 0.1.*
+- data-sketches-core == 0.2.*
 
 library:
   source-dirs: src
+  exposed-modules:
+  - DataSketches.Quantiles.RelativeErrorQuantile
+  - DataSketches.Quantiles.KLL
+  - DataSketches.Frequencies.CountMin
+  - DataSketches.Distinct.HyperLogLog
+  - DataSketches.Distinct.Theta
 
 tests:
   data-sketches-test:
@@ -56,12 +62,17 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - data-sketches
+    - data-sketches-core
     - hspec
     - hspec-junit-formatter
     # - hspec-discover
     - QuickCheck
     - statistics
     - pretty-show
+    - hedgehog
+    - process
+    - directory
+    - temporary
     # build-tool-depends:
     # - hspec-discover:hspec-discover
 
@@ -73,7 +84,9 @@ benchmarks:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -O2
     dependencies:
     - criterion
     - data-sketches
-    # - prometheus-client
+    - data-sketches-core
+    - primitive

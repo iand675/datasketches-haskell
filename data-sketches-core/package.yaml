@@ -1,5 +1,5 @@
 name:                data-sketches-core
-version:             0.1.0.0
+version:             0.2.0.0
 github:              "iand675/datasketches-haskell"
 license:             BSD3
 author:              "Ian Duncan"
@@ -39,6 +39,31 @@ dependencies:
 
 library:
   source-dirs: src
+  c-sources:
+  - cbits/sketches.c
+  - cbits/kll.c
+  - cbits/hll.c
+  - cbits/countmin.c
+  - cbits/theta.c
+  - cbits/req.c
+  cc-options:
+  - -O2
+  exposed-modules:
+  - DataSketches.Core.Internal.URef
+  - DataSketches.Core.Snapshot
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
+  - DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch
+  - DataSketches.Quantiles.RelativeErrorQuantile.Types
+  - DataSketches.Quantiles.KLL.Internal
+  - DataSketches.Frequencies.CountMin.Internal
+  - DataSketches.Distinct.HyperLogLog.Internal
+  - DataSketches.Distinct.Theta.Internal
+  - DataSketches.Core.Internal.CBindings
+  - DataSketches.Quantiles.RelativeErrorQuantile.CInternal
 
 tests:
   data-sketches-core-test:

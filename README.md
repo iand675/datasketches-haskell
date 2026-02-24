@@ -1,14 +1,228 @@
-# DataSketeches
+# DataSketches
 
-[![Build status](https://badge.buildkite.com/7b2af8b4b0c08a5db141959addf751380574ac8079a7d8cd00.svg)](https://buildkite.com/iand675/datasketches)
-[![data-sketches on stackage](https://stackage.org/package/packagename/badge/nightly)](https://stackage.org/nightly/package/data-sketches)
-[![data-sketches on hackage](https://img.shields.io/hackage/v/data-sketches)](https://hackage.haskell.org/package/data-sketches)
+A Haskell implementation of [Apache DataSketches](https://datasketches.apache.org/), stochastic streaming algorithms for approximate computation on large datasets.
 
-A port of subsets of the [Apache DataSketches](https://datasketches.apache.org/) library.
+## Why sketches?
 
-## Overview
+Suppose you have a billion web requests and you want to know: "what was the 99th-percentile latency?" The exact answer requires sorting all billion values. That's gigabytes of RAM and a lot of time. Now suppose the data is split across 50 servers and arriving in real-time. Sorting is no longer even possible.
 
-In the analysis of big data there are often problem queries that don’t scale because they require huge compute resources and time to generate exact results. Examples include count distinct, quantiles, most-frequent items, joins, matrix computations, and graph analysis.
+A sketch gives you an approximate answer– say, "the p99 was between 247ms and 253ms"– using a few kilobytes of memory, in a single pass through the data, and the sketches from all 50 servers can be merged into one as if you'd seen everything in one place.
 
-Stocastic streaming algorithms for operating on large datasets. If approximate results are acceptable, there is a class of specialized algorithms, called streaming algorithms, or sketches that can produce results orders-of magnitude faster and with mathematically proven error bounds. For interactive queries there may not be other viable alternatives, and in the case of real-time analysis, sketches are the only known solution.
+The trade-off is simple: you give up a tiny, bounded amount of accuracy and in return you get answers that would otherwise be infeasible to compute.
 
+Key properties:
+
+- **Sub-linear space**: A 4KB HyperLogLog can count the distinct items in a billion-element stream. Memory depends on *accuracy*, not data volume.
+- **Single-pass**: Each item is processed once and discarded. No need to store or revisit the raw data.
+- **Mergeable**: Sketches built on separate machines combine exactly as if all data had been fed to one sketch. This is what makes sketches work in distributed systems. Each node builds its own sketch locally, and they merge at query time.
+- **Bounded error**: The error comes with mathematical guarantees. You choose the error bound up front (via a parameter like `k` or `p`), and the sketch provably stays within it.
+
+## Sketch families
+
+### Quantiles
+
+"What value is at the Nth percentile?", or equivalently, "what fraction of values are below X?"
+
+If you're monitoring API latencies in production, you care about percentiles: the p50 tells you what a typical request looks like, the p99 tells you what a bad request looks like, and the p99.9 tells you what your worst users are experiencing. Computing these exactly requires sorting every value. A quantile sketch gives you the answer from a fixed-size buffer, no matter how many values you've seen.
+
+| Sketch | Module | Error model | Typical use |
+|--------|--------|-------------|-------------|
+| **KLL** | `DataSketches.Quantiles.KLL` | Additive: uniform ~1.3% error at k=200 | General-purpose quantiles (latency percentiles, size distributions) |
+| **REQ** | `DataSketches.Quantiles.RelativeErrorQuantile` | Relative: error shrinks at the tails | Extreme percentiles (p99.9, p99.99) where additive error is too coarse |
+
+**When to choose which**: KLL is faster and simpler, so you should use it unless you specifically need high accuracy at the distribution tails. The difference mostly matters at the extremes: if you ask KLL for p99.99, the answer might be off by ~1.3% of the full range. REQ's error is instead proportional to how far you are from the tail. At p99.99, that's proportional to 0.01%, so the answer is vastly tighter.
+
+Both support: `insert`, `quantile`, `quantiles`, `rank`, `ranks`, `cumulativeDistributionFunction`, `probabilityMassFunction`, `merge`, `count`, `minimum`, `maximum`.
+
+### Distinct counting
+
+"How many unique items have I seen?"
+
+You're logging user IDs hitting your service. You don't care *which* users, you just want to know *how many different* ones there were today. Keeping a set of every ID you've seen works fine at small scale, but at a billion events it's expensive. A distinct-count sketch tells you "approximately 4.2 million unique users" using a few kilobytes.
+
+| Sketch | Module | Accuracy | Distinct feature |
+|--------|--------|----------|------------------|
+| **HyperLogLog** | `DataSketches.Distinct.HyperLogLog` | ~1.04/sqrt(2^p) standard error | Smallest memory footprint for pure cardinality |
+| **Theta** | `DataSketches.Distinct.Theta` | ~1/sqrt(k) standard error | Set operations: union, intersection, difference |
+
+**When to choose which**: HyperLogLog is smaller and simpler when all you need is a count. Theta is the choice when you need set math: "how many users visited *both* page A and page B?" (intersection), "how many visited A but *not* B?" (difference), or "how many visited *either*?" (union). HyperLogLog can't answer these.
+
+### Frequency estimation
+
+"How many times has this particular item appeared?"
+
+You're running an ad platform and need to enforce a rule: "show each user at most 5 ads per hour." You can't keep a counter per user (too many users), but you can keep a Count-Min sketch. It'll tell you "this user has seen approximately 4 ads", and importantly, it will never *undercount*. It might say 5 when the real answer is 4, but it'll never say 3. That makes it safe for rate-limiting and frequency capping: you might stop showing ads slightly early, but you'll never exceed the cap.
+
+| Sketch | Module | Error model | Typical use |
+|--------|--------|-------------|-------------|
+| **Count-Min** | `DataSketches.Frequencies.CountMin` | Overestimates by at most εN; never undercounts | Heavy hitters, frequency capping, rate limiting |
+
+## Quick start
+
+### Quantiles with KLL
+
+```haskell
+import qualified DataSketches.Quantiles.KLL as KLL
+
+main :: IO ()
+main = do
+  sk <- KLL.mkKllSketch 200
+  mapM_ (KLL.insert sk) [1..100000 :: Double]
+  p50 <- KLL.quantile sk 0.50
+  p99 <- KLL.quantile sk 0.99
+  putStrLn $ "p50 = " ++ show p50 ++ ", p99 = " ++ show p99
+```
+
+### Tail-accurate quantiles with REQ
+
+```haskell
+import qualified DataSketches.Quantiles.RelativeErrorQuantile as REQ
+
+main :: IO ()
+main = do
+  sk <- REQ.mkReqSketch 12 REQ.HighRanksAreAccurate
+  mapM_ (REQ.insert sk) [1..100000 :: Double]
+  p999 <- REQ.quantile sk 0.999
+  putStrLn $ "p99.9 = " ++ show p999
+```
+
+### Distinct counting with HyperLogLog
+
+```haskell
+import qualified DataSketches.Distinct.HyperLogLog as HLL
+import Data.Hashable (hash)
+import Data.Word (Word64)
+
+main :: IO ()
+main = do
+  sk <- HLL.mkHllSketch 12
+  mapM_ (HLL.insert sk . fromIntegral . hash) ["alice", "bob", "alice", "carol"]
+  n <- HLL.estimate sk
+  putStrLn $ "distinct count ≈ " ++ show n  -- ≈ 3.0
+```
+
+### Set operations with Theta
+
+```haskell
+import qualified DataSketches.Distinct.Theta as Theta
+
+main :: IO ()
+main = do
+  a <- Theta.mkThetaSketch 4096
+  b <- Theta.mkThetaSketch 4096
+  mapM_ (Theta.insert a) [1..1000]
+  mapM_ (Theta.insert b) [500..1500]
+  both <- Theta.intersection a b
+  overlap <- Theta.estimate both
+  putStrLn $ "items in both streams ≈ " ++ show overlap  -- ≈ 501
+```
+
+### Frequency estimation with Count-Min
+
+```haskell
+import qualified DataSketches.Frequencies.CountMin as CM
+import Data.Hashable (hash)
+import Data.Word (Word64)
+
+main :: IO ()
+main = do
+  sk <- CM.mkCountMinSketch 0.001 0.01
+  mapM_ (\_ -> CM.insert sk (fromIntegral (hash ("popular" :: String)))) [1..1000]
+  freq <- CM.estimate sk (fromIntegral (hash ("popular" :: String)))
+  putStrLn $ "frequency ≈ " ++ show freq  -- ≈ 1000
+```
+
+## Architecture
+
+The library is split into two packages:
+
+- **`data-sketches`** — The public API. This is what you depend on.
+- **`data-sketches-core`** — Internal implementations. You shouldn't need to import this directly.
+
+### Why so much C?
+
+All five sketches are implemented in C (`cbits/`) with Haskell `ForeignPtr` wrappers. The reason is performance: these sketches are tight insert/query loops over flat arrays. In C, an insert is a few pointer dereferences and an arithmetic operation. The sketch memory is invisible to GHC's garbage collector, so there's no GC pressure and no pauses.
+
+The Haskell API remains idiomatic. `PrimMonad`-polymorphic, type-safe, and impossible to misuse, but the hot paths run in C.
+
+## Benchmarks
+
+Compared against the Java DataSketches 6.1.1 reference on the same machine (Apple M2), single-threaded. The Haskell/C implementation wins all 22 benchmarks.
+
+### REQ — Relative Error Quantiles (k=6)
+
+| Benchmark | Haskell | Java | Winner |
+|-----------|--------:|-----:|--------|
+| insert 100 | 4.2 µs | 54.0 µs | **Haskell 13x** |
+| insert 1,000 | 24.9 µs | 144.1 µs | **Haskell 5.8x** |
+| insert 10,000 | 217 µs | 925.6 µs | **Haskell 4.3x** |
+| insert 100,000 | 1,959 µs | 3,400 µs | **Haskell 1.7x** |
+| rank (100 queries / 10k items) | 19.4 µs | 23.7 µs | **Haskell 1.2x** |
+
+### KLL — Quantiles (k=200)
+
+| Benchmark | Haskell | Java | Winner |
+|-----------|--------:|-----:|--------|
+| insert 100 | 3.1 µs | 26.3 µs | **Haskell 8.5x** |
+| insert 1,000 | 16.2 µs | 112.8 µs | **Haskell 7.0x** |
+| insert 10,000 | 150 µs | 565.4 µs | **Haskell 3.8x** |
+| insert 100,000 | 1,433 µs | 1,995 µs | **Haskell 1.4x** |
+| rank (100 queries / 10k items) | 9.6 µs | 30.6 µs | **Haskell 3.2x** |
+
+### HLL — HyperLogLog (p=12)
+
+| Benchmark | Haskell | Java | Winner |
+|-----------|--------:|-----:|--------|
+| insert 1,000 | 7.3 µs | 116.2 µs | **Haskell 16x** |
+| insert 10,000 | 49.6 µs | 253.5 µs | **Haskell 5.1x** |
+| insert 100,000 | 429 µs | 896.8 µs | **Haskell 2.1x** |
+
+Both REQ and KLL also expose `insertBatch` for bulk loading via `Data.Vector.Storable`, which eliminates per-element FFI overhead:
+
+| Batch benchmark | Haskell | Java | Winner |
+|-----------------|--------:|-----:|--------|
+| REQ insertBatch 100,000 | 1,728 µs | 3,400 µs | **Haskell 2.0x** |
+| KLL insertBatch 100,000 | 1,132 µs | 1,995 µs | **Haskell 1.8x** |
+| HLL insertBatch 100,000 | 195 µs | 896.8 µs | **Haskell 4.6x** |
+
+### Running benchmarks
+
+```bash
+# Haskell
+stack bench
+
+# Java (requires JDK)
+cd java-harness
+javac -cp "lib/*" SketchBench.java
+java -cp ".:lib/*" SketchBench
+```
+
+## Testing and cross-validation
+
+The test suite includes:
+
+- **Unit tests** via Hspec for each sketch type: construction, insertion, queries, edge cases (empty sketches, NaN handling, single elements), merge correctness.
+- **Property-based tests** via Hedgehog: quantile and rank values fall within advertised error bounds, CDF/PMF invariants hold, merge commutativity.
+- **Cross-validation** against the Java DataSketches 6.1.1 reference implementation (700 test cases). In exact mode (no compaction), results match exactly. In estimation mode, both implementations are independently verified against ground truth.
+
+```bash
+# Compile Java harness (one-time)
+cd java-harness && javac -cp "lib/*" SketchHarness.java
+
+# Run all tests including cross-validation
+stack test
+```
+
+## Packages
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| **data-sketches** | 0.4.0.0 | Public API — depend on this |
+| **data-sketches-core** | 0.2.0.0 | Internals and C implementations |
+
+## References
+
+- [Apache DataSketches](https://datasketches.apache.org/)
+- Karnin, Lang, Liberty. [Optimal Quantile Approximation in Streams](https://arxiv.org/abs/1603.05346). FOCS 2016.
+- Cormode, Muthukrishnan. [An Improved Data Stream Summary: The Count-Min Sketch and its Applications](https://dimacs.rutgers.edu/~graham/pubs/papers/cm-full.pdf). Journal of Algorithms, 2005.
+- Flajolet, Fusy, Gandouet, Meunier. [HyperLogLog: the analysis of a near-optimal cardinality estimation algorithm](http://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf). AofA 2007.

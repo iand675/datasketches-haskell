@@ -1,11 +1,11 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
 name:           data-sketches-core
-version:        0.1.0.0
+version:        0.2.0.0
 description:    Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
 homepage:       https://github.com/iand675/datasketches-haskell#readme
 bug-reports:    https://github.com/iand675/datasketches-haskell/issues
@@ -34,6 +34,12 @@ library
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch
       DataSketches.Quantiles.RelativeErrorQuantile.Types
+      DataSketches.Quantiles.KLL.Internal
+      DataSketches.Frequencies.CountMin.Internal
+      DataSketches.Distinct.HyperLogLog.Internal
+      DataSketches.Distinct.Theta.Internal
+      DataSketches.Core.Internal.CBindings
+      DataSketches.Quantiles.RelativeErrorQuantile.CInternal
   other-modules:
       Paths_data_sketches_core
   hs-source-dirs:
@@ -46,6 +52,14 @@ library
       StandaloneDeriving
       TypeFamilies
       TypeOperators
+  cc-options: -O2
+  c-sources:
+      cbits/sketches.c
+      cbits/kll.c
+      cbits/hll.c
+      cbits/countmin.c
+      cbits/theta.c
+      cbits/req.c
   build-depends:
       base >=4.7 && <5
     , deepseq
