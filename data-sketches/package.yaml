@@ -4,7 +4,7 @@ github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
 maintainer:          "ian@iankduncan.com"
-copyright:           "2021 Ian Duncan, Rob Bassi, Mercury Technologies"
+copyright:           "2025 Ian Duncan, Rob Bassi, Mercury Technologies"
 
 default-extensions:
 - BangPatterns
@@ -25,8 +25,8 @@ extra-doc-files:
 - docs/images/ReqErrorLraK12SL11_LE.png
 
 # Metadata used when publishing your package
-# synopsis:            Short description of your package
-# category:            Web
+synopsis:            Stochastic streaming algorithms for approximate computation on large datasets. Includes KLL, HLL, Theta, Count-Min, and REQ sketches.
+category:            Data
 
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is

@@ -6,13 +6,15 @@ cabal-version: 1.18
 
 name:           data-sketches
 version:        0.4.0.0
+synopsis:       Stochastic streaming algorithms for approximate computation on large datasets. Includes KLL, HLL, Theta, Count-Min, and REQ sketches.
 description:    Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
+category:       Data
 homepage:       https://github.com/iand675/datasketches-haskell#readme
 bug-reports:    https://github.com/iand675/datasketches-haskell/issues
 author:         Ian Duncan, Rob Bassi
 maintainer:     ian@iankduncan.com
-copyright:      2021 Ian Duncan, Rob Bassi, Mercury Technologies
-license:        Apache-2.0
+copyright:      2025 Ian Duncan, Rob Bassi, Mercury Technologies
+license:        Apache
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
