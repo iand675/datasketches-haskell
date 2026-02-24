@@ -1,21 +1,52 @@
--- | The KLL (Karnin-Lang-Liberty) Quantiles Sketch provides approximate quantile
--- computation with additive error bounds. Based on "Optimal Quantile Approximation
--- in Streams" (FOCS 2016).
+-- | KLL (Karnin-Lang-Liberty) sketch for approximate quantile computation
+-- with additive error bounds. Based on "Optimal Quantile Approximation
+-- in Streams" (Karnin, Lang, Liberty — FOCS 2016).
 --
--- Unlike the REQ sketch which provides relative error bounds (better at extremes),
--- KLL provides uniform additive error across all ranks. With parameter k=200 (default),
--- the error is approximately 1.33% with 99% confidence.
+-- Feed it a stream of numbers, then ask questions like "what's the median?"
+-- or "what value is at the 99th percentile?" — without storing every value.
+-- The sketch keeps a small, fixed-size buffer regardless of how many items
+-- you insert.
 --
--- The sketch is fully mergeable, making it suitable for parallel and distributed
--- computing environments.
+-- KLL provides uniform additive error across all ranks. With @k = 200@,
+-- the normalized rank error is approximately 1.33% with 99% confidence,
+-- regardless of whether you query p50 or p99.
+--
+-- This is the recommended quantile sketch for most use cases. Prefer
+-- "DataSketches.Quantiles.RelativeErrorQuantile" only when you need
+-- high accuracy specifically at the distribution tails (p99.9+).
+--
+-- === Implementation
+--
+-- Backed by a C implementation (@cbits\/kll.c@) behind a 'ForeignPtr'.
+-- All sketch memory lives outside the GHC heap — zero GC pressure,
+-- zero boxing overhead.
+--
+-- === Usage
+--
+-- @
+-- import qualified DataSketches.Quantiles.KLL as KLL
+--
+-- main :: IO ()
+-- main = do
+--   sk <- KLL.'mkKllSketch' 200
+--   mapM_ (KLL.'insert' sk) [1..100000 :: Double]
+--   p99 <- KLL.'quantile' sk 0.99
+--   putStrLn $ "p99 = " ++ show p99
+-- @
+--
+-- === Mergeability
+--
+-- Fully mergeable: 'merge' combines two sketches as if all data had been
+-- inserted into one. Suitable for parallel and distributed computation.
 module DataSketches.Quantiles.KLL
   ( -- * Construction
     KllSketch
   , mkKllSketch
   -- * Updating the sketch
   , insert
+  , insertBatch
   , merge
-  -- * Sketch summaries
+  -- * Querying
   , count
   , null
   , minimum
@@ -32,6 +63,7 @@ module DataSketches.Quantiles.KLL
 import Prelude hiding (null, minimum, maximum)
 import Control.Monad (unless, when)
 import Control.Monad.Primitive (PrimMonad(PrimState))
+import qualified Data.Vector.Storable as VS
 import Data.Word (Word32, Word64)
 import DataSketches.Quantiles.KLL.Internal
 
@@ -42,6 +74,10 @@ import DataSketches.Quantiles.KLL.Internal
 -- | Insert a value into the sketch. NaN values are ignored.
 insert :: PrimMonad m => KllSketch (PrimState m) -> Double -> m ()
 insert = kllInsert
+
+-- | Bulk-insert a storable vector of doubles. Avoids per-element FFI overhead.
+insertBatch :: PrimMonad m => KllSketch (PrimState m) -> VS.Vector Double -> m ()
+insertBatch = kllInsertBatch
 
 -- | Merge the second sketch into the first.
 merge :: PrimMonad m => KllSketch (PrimState m) -> KllSketch (PrimState m) -> m ()

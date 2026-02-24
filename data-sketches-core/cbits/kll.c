@@ -26,11 +26,24 @@ static void xoshiro_seed(uint64_t s[4], uint64_t seed) {
     }
 }
 
+static int kll_cmp_double(const void *a, const void *b) {
+    double da = *(const double *)a, db = *(const double *)b;
+    return (da > db) - (da < db);
+}
+
+typedef struct { double val; uint64_t weight; } witem;
+
+static int kll_cmp_witem(const void *a, const void *b) {
+    double da = ((const witem *)a)->val, db = ((const witem *)b)->val;
+    return (da > db) - (da < db);
+}
+
 #define KLL_MIN_LEVEL_SIZE 2
 
 typedef struct {
     double  *items;
     int     *levels;
+    int     *level_caps;     /* cached per-level capacities */
     int      num_levels;
     int      items_cap;
     int      levels_cap;
@@ -50,38 +63,67 @@ static int kll_level_capacity(uint32_t k, int num_levels, int h) {
     return c < KLL_MIN_LEVEL_SIZE ? KLL_MIN_LEVEL_SIZE : c;
 }
 
-static int kll_total_capacity(uint32_t k, int num_levels) {
+static void kll_recompute_caps(kll_sketch_t *sk) {
     int total = 0;
-    for (int h = 0; h < num_levels; h++)
-        total += kll_level_capacity(k, num_levels, h);
-    return total;
+    for (int h = 0; h < sk->num_levels; h++) {
+        sk->level_caps[h] = kll_level_capacity(sk->k, sk->num_levels, h);
+        total += sk->level_caps[h];
+    }
+    sk->cached_total_cap = total;
 }
 
-static void kll_update_cached_cap(kll_sketch_t *sk) {
-    sk->cached_total_cap = kll_total_capacity(sk->k, sk->num_levels);
+static inline void kll_isort(double *arr, int n) {
+    for (int i = 1; i < n; i++) {
+        double key = arr[i];
+        int j = i - 1;
+        while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j--;
+        }
+        arr[j + 1] = key;
+    }
 }
 
-/* Insertion sort for small n, qsort for large */
+static inline void kll_swap(double *a, double *b) {
+    double t = *a; *a = *b; *b = t;
+}
+
+static void kll_qsort(double *arr, int n) {
+    while (n > 16) {
+        /* Median-of-three pivot */
+        int mid = n >> 1;
+        if (arr[0] > arr[mid]) kll_swap(&arr[0], &arr[mid]);
+        if (arr[0] > arr[n-1]) kll_swap(&arr[0], &arr[n-1]);
+        if (arr[mid] > arr[n-1]) kll_swap(&arr[mid], &arr[n-1]);
+        double pivot = arr[mid];
+        kll_swap(&arr[mid], &arr[n-2]);
+
+        int i = 0, j = n - 2;
+        for (;;) {
+            while (arr[++i] < pivot) {}
+            while (arr[--j] > pivot) {}
+            if (i >= j) break;
+            kll_swap(&arr[i], &arr[j]);
+        }
+        kll_swap(&arr[i], &arr[n-2]);
+
+        /* Recurse on smaller partition, loop on larger */
+        if (i < n - i) {
+            kll_qsort(arr, i);
+            arr += i + 1;
+            n -= i + 1;
+        } else {
+            kll_qsort(arr + i + 1, n - i - 1);
+            n = i;
+        }
+    }
+    kll_isort(arr, n);
+}
+
 static inline void kll_sort(double *arr, int n) {
     if (n <= 1) return;
-    if (n <= 32) {
-        for (int i = 1; i < n; i++) {
-            double key = arr[i];
-            int j = i - 1;
-            while (j >= 0 && arr[j] > key) {
-                arr[j + 1] = arr[j];
-                j--;
-            }
-            arr[j + 1] = key;
-        }
-    } else {
-        /* Branchless comparator for qsort */
-        int cmp(const void *a, const void *b) {
-            double da = *(const double *)a, db = *(const double *)b;
-            return (da > db) - (da < db);
-        }
-        qsort(arr, (size_t)n, sizeof(double), cmp);
-    }
+    if (n <= 16) { kll_isort(arr, n); return; }
+    kll_qsort(arr, n);
 }
 
 static void kll_grow_items(kll_sketch_t *sk) {
@@ -105,11 +147,12 @@ static void kll_add_level(kll_sketch_t *sk) {
     if (nl + 1 > sk->levels_cap) {
         int new_cap = sk->levels_cap * 2;
         sk->levels = (int *)realloc(sk->levels, new_cap * sizeof(int));
+        sk->level_caps = (int *)realloc(sk->level_caps, new_cap * sizeof(int));
         sk->levels_cap = new_cap;
     }
     sk->levels[nl] = sk->levels[sk->num_levels];
     sk->num_levels = nl;
-    kll_update_cached_cap(sk);
+    kll_recompute_caps(sk);
 }
 
 static void kll_compact_level(kll_sketch_t *sk, int h) {
@@ -141,8 +184,7 @@ static void kll_compact_level(kll_sketch_t *sk, int h) {
 static void kll_compress(kll_sketch_t *sk) {
     for (int h = 0; h < sk->num_levels; h++) {
         int sz = sk->levels[h + 1] - sk->levels[h];
-        int cap = kll_level_capacity(sk->k, sk->num_levels, h);
-        if (sz >= cap && sz >= 2) {
+        if (sz >= sk->level_caps[h] && sz >= 2) {
             if (h + 1 >= sk->num_levels) kll_add_level(sk);
             kll_compact_level(sk, h);
         }
@@ -156,6 +198,7 @@ kll_sketch_t *kll_new(uint32_t k, uint64_t seed) {
     sk->items = (double *)malloc(init_cap * sizeof(double));
     sk->items_cap = init_cap;
     sk->levels = (int *)malloc(8 * sizeof(int));
+    sk->level_caps = (int *)malloc(8 * sizeof(int));
     sk->levels_cap = 8;
     sk->levels[0] = init_cap;
     sk->levels[1] = init_cap;
@@ -163,12 +206,12 @@ kll_sketch_t *kll_new(uint32_t k, uint64_t seed) {
     sk->min_val = NAN;
     sk->max_val = NAN;
     xoshiro_seed(sk->rng, seed);
-    kll_update_cached_cap(sk);
+    kll_recompute_caps(sk);
     return sk;
 }
 
 void kll_free(kll_sketch_t *sk) {
-    if (sk) { free(sk->items); free(sk->levels); free(sk); }
+    if (sk) { free(sk->items); free(sk->levels); free(sk->level_caps); free(sk); }
 }
 
 void kll_insert(kll_sketch_t *sk, double val) {
@@ -189,6 +232,11 @@ void kll_insert(kll_sketch_t *sk, double val) {
     int retained = sk->levels[sk->num_levels] - sk->levels[0];
     if (__builtin_expect(retained >= sk->cached_total_cap, 0))
         kll_compress(sk);
+}
+
+void kll_insert_batch(kll_sketch_t *sk, const double *vals, int n) {
+    for (int i = 0; i < n; i++)
+        kll_insert(sk, vals[i]);
 }
 
 uint64_t kll_count(const kll_sketch_t *sk)    { return sk->total_n; }
@@ -215,7 +263,6 @@ double kll_rank(const kll_sketch_t *sk, double value) {
 double kll_quantile(const kll_sketch_t *sk, double norm_rank) {
     if (sk->total_n == 0) return NAN;
     int retained = kll_retained(sk);
-    typedef struct { double val; uint64_t weight; } witem;
     witem *witems = (witem *)malloc(retained * sizeof(witem));
     int wi = 0;
     for (int h = 0; h < sk->num_levels; h++) {
@@ -227,11 +274,7 @@ double kll_quantile(const kll_sketch_t *sk, double norm_rank) {
             wi++;
         }
     }
-    int cmp(const void *a, const void *b) {
-        double da = ((const witem *)a)->val, db = ((const witem *)b)->val;
-        return (da > db) - (da < db);
-    }
-    qsort(witems, wi, sizeof(witem), cmp);
+    qsort(witems, wi, sizeof(witem), kll_cmp_witem);
     uint64_t target = (uint64_t)(norm_rank * (double)sk->total_n);
     uint64_t cum = 0;
     double result = witems[wi - 1].val;

@@ -31,19 +31,19 @@ void hll_free(hll_sketch_t *sk) {
 void hll_c_insert(hll_sketch_t *sk, uint64_t item) {
     uint64_t hash = hll_murmur_mix64(item);
     int reg_idx = (int)(hash & (uint64_t)(sk->m - 1));
-    uint64_t w = hash >> sk->p;
-    /* __builtin_ctzll returns the bit width for 0 on x86 with tzcnt,
-       but is undefined in the C standard. The explicit check is free
-       since the branch predictor will almost always take the else path. */
+    /* Branchless rho: place a sentinel bit at position (64-p) so
+       __builtin_ctzll always terminates within the valid range.
+       Eliminates two branches from the old w==0 / clz<bits checks. */
     int bits = 64 - sk->p;
-    int clz = (w == 0) ? bits : __builtin_ctzll(w);
-    int rho = (clz < bits ? clz : bits) + 1;
-    uint8_t rho8 = (uint8_t)rho;
-    /* Branchless conditional store: avoid misprediction on the common
-       case where the register already holds a larger value. The compiler
-       turns this into a cmov. */
+    uint64_t w = (hash >> sk->p) | (1ULL << bits);
+    uint8_t rho = (uint8_t)(__builtin_ctzll(w) + 1);
     uint8_t cur = sk->registers[reg_idx];
-    sk->registers[reg_idx] = rho8 > cur ? rho8 : cur;
+    sk->registers[reg_idx] = rho > cur ? rho : cur;
+}
+
+void hll_c_insert_batch(hll_sketch_t *sk, const uint64_t *items, int n) {
+    for (int i = 0; i < n; i++)
+        hll_c_insert(sk, items[i]);
 }
 
 double hll_c_estimate(const hll_sketch_t *sk) {

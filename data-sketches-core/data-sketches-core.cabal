@@ -39,6 +39,7 @@ library
       DataSketches.Distinct.HyperLogLog.Internal
       DataSketches.Distinct.Theta.Internal
       DataSketches.Core.Internal.CBindings
+      DataSketches.Quantiles.RelativeErrorQuantile.CInternal
   other-modules:
       Paths_data_sketches_core
   hs-source-dirs:
@@ -58,6 +59,7 @@ library
       cbits/hll.c
       cbits/countmin.c
       cbits/theta.c
+      cbits/req.c
   build-depends:
       base >=4.7 && <5
     , deepseq

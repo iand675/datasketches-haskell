@@ -1,31 +1,72 @@
 -- | HyperLogLog sketch for cardinality (distinct count) estimation.
 --
--- HyperLogLog estimates the number of distinct items in a data stream using
--- very little memory. The algorithm works by hashing each item and tracking
--- the maximum number of leading zeros observed in different hash partitions.
+-- "How many /different/ things have I seen?" — not how many total, but how
+-- many unique. Think unique visitors, unique IPs, unique search queries.
+-- Counting exactly requires remembering every item you've seen (a set), which
+-- grows with the data. HyperLogLog answers the same question using a few
+-- kilobytes, no matter how large the stream.
 --
--- Accuracy is controlled by the precision parameter p, which determines
--- the number of registers (2^p). The standard error is approximately
--- 1.04 / sqrt(2^p).
+-- It works by hashing each item and tracking the maximum number of leading
+-- zeros observed across 2^p independent register buckets.
 --
--- Common configurations:
+-- The standard error is approximately @1.04 / sqrt(2^p)@.
 --
--- * p=10: 1024 registers (1KB), ~3.25% error
--- * p=12: 4096 registers (4KB), ~1.63% error
--- * p=14: 16384 registers (16KB), ~0.81% error
--- * p=16: 65536 registers (64KB), ~0.41% error
+-- === Precision configurations
 --
--- Items must be represented as Word64 values. Apply a hash function to convert
--- your domain types before inserting.
+-- +------+-----------+------+-------------+
+-- | @p@  | Registers | RAM  | Std. error  |
+-- +======+===========+======+=============+
+-- | 10   | 1,024     | 1 KB | ~3.25%      |
+-- +------+-----------+------+-------------+
+-- | 12   | 4,096     | 4 KB | ~1.63%      |
+-- +------+-----------+------+-------------+
+-- | 14   | 16,384    | 16 KB| ~0.81%      |
+-- +------+-----------+------+-------------+
+-- | 16   | 65,536    | 64 KB| ~0.41%      |
+-- +------+-----------+------+-------------+
 --
--- Sketches are fully mergeable: the union of two HLL sketches gives the same
--- result as inserting all items from both streams into a single sketch.
+-- === Hashing
+--
+-- Items must be pre-hashed to 'Word64'. Apply a good hash function (e.g.
+-- from @hashable@ or @xxhash@) to your domain types before calling 'insert'.
+-- The quality of the cardinality estimate depends on the hash being uniform.
+--
+-- === Implementation
+--
+-- Backed by a C implementation (@cbits\/hll.c@) behind a 'ForeignPtr'.
+-- All sketch memory lives outside the GHC heap.
+--
+-- === Usage
+--
+-- @
+-- import qualified DataSketches.Distinct.HyperLogLog as HLL
+-- import Data.Hashable (hash)
+--
+-- main :: IO ()
+-- main = do
+--   sk <- HLL.'mkHllSketch' 12
+--   mapM_ (HLL.'insert' sk . fromIntegral . hash) [\"alice\", \"bob\", \"alice\"]
+--   n <- HLL.'estimate' sk
+--   putStrLn $ "distinct count ≈ " ++ show n  -- ≈ 2.0
+-- @
+--
+-- === Mergeability
+--
+-- Fully mergeable via 'merge'. The union of two HLL sketches gives the same
+-- result as inserting all items from both streams into a single sketch. Both
+-- must share the same precision @p@.
+--
+-- === When to use Theta instead
+--
+-- HyperLogLog only supports cardinality estimation and union. If you need
+-- set intersection or difference, use "DataSketches.Distinct.Theta".
 module DataSketches.Distinct.HyperLogLog
   ( -- * Construction
     HllSketch
   , mkHllSketch
   -- * Updating
   , insert
+  , insertBatch
   , merge
   -- * Querying
   , estimate
@@ -33,12 +74,17 @@ module DataSketches.Distinct.HyperLogLog
   ) where
 
 import Control.Monad.Primitive (PrimMonad, PrimState)
+import qualified Data.Vector.Storable as VS
 import Data.Word (Word64)
 import DataSketches.Distinct.HyperLogLog.Internal
 
 -- | Insert an item into the sketch. The item should be a hash of the original value.
 insert :: PrimMonad m => HllSketch (PrimState m) -> Word64 -> m ()
 insert = hllInsert
+
+-- | Bulk-insert a storable vector of hashed items. Avoids per-element FFI overhead.
+insertBatch :: PrimMonad m => HllSketch (PrimState m) -> VS.Vector Word64 -> m ()
+insertBatch = hllInsertBatch
 
 -- | Estimate the number of distinct items inserted.
 estimate :: PrimMonad m => HllSketch (PrimState m) -> m Double

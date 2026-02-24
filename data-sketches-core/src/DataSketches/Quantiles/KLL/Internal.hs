@@ -3,6 +3,7 @@ module DataSketches.Quantiles.KLL.Internal
   ( KllSketch
   , mkKllSketch
   , kllInsert
+  , kllInsertBatch
   , kllCount
   , kllMinimum
   , kllMaximum
@@ -18,6 +19,7 @@ import Control.Monad (unless)
 import Control.Monad.Primitive
 import Data.IORef
 import Data.Word
+import qualified Data.Vector.Storable as VS
 import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Ptr
@@ -31,7 +33,8 @@ instance NFData (KllSketch s) where rnf !_ = ()
 
 foreign import ccall unsafe "kll_new"      c_kll_new      :: Word32 -> Word64 -> IO (Ptr ())
 foreign import ccall unsafe "&kll_free"    c_kll_free     :: FunPtr (Ptr () -> IO ())
-foreign import ccall unsafe "kll_insert"   c_kll_insert   :: Ptr () -> CDouble -> IO ()
+foreign import ccall unsafe "kll_insert"       c_kll_insert       :: Ptr () -> CDouble -> IO ()
+foreign import ccall unsafe "kll_insert_batch" c_kll_insert_batch :: Ptr () -> Ptr CDouble -> CInt -> IO ()
 foreign import ccall unsafe "kll_count"    c_kll_count    :: Ptr () -> IO Word64
 foreign import ccall unsafe "kll_min"      c_kll_min      :: Ptr () -> IO CDouble
 foreign import ccall unsafe "kll_max"      c_kll_max      :: Ptr () -> IO CDouble
@@ -56,6 +59,11 @@ kllInsert :: PrimMonad m => KllSketch (PrimState m) -> Double -> m ()
 kllInsert sk val = unsafePrimToPrim $ withSketch sk $ \p ->
   c_kll_insert p (realToFrac val)
 {-# INLINE kllInsert #-}
+
+kllInsertBatch :: PrimMonad m => KllSketch (PrimState m) -> VS.Vector Double -> m ()
+kllInsertBatch sk vals = unsafePrimToPrim $ withSketch sk $ \p ->
+  VS.unsafeWith (VS.unsafeCast vals) $ \arr ->
+    c_kll_insert_batch p arr (fromIntegral $ VS.length vals)
 
 kllCount :: PrimMonad m => KllSketch (PrimState m) -> m Word64
 kllCount sk = unsafePrimToPrim $ withSketch sk c_kll_count
