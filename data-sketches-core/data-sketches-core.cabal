@@ -52,6 +52,10 @@ library
       StandaloneDeriving
       TypeFamilies
       TypeOperators
+  include-dirs: cbits
+  install-includes:
+      req.h
+      kll.h
   cc-options: -O2
   c-sources:
       cbits/sketches.c

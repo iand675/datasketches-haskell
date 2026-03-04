@@ -46,6 +46,10 @@ library:
   - cbits/countmin.c
   - cbits/theta.c
   - cbits/req.c
+  include-dirs: cbits
+  install-includes:
+  - req.h
+  - kll.h
   cc-options:
   - -O2
   exposed-modules:
