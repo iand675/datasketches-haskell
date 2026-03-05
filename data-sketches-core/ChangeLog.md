@@ -1,5 +1,13 @@
 # Changelog for data-sketches-core
 
+
+## 0.2.0.1
+
+### Bug fixes
+
+- **Missing header files**: Add C header files to extra-source-files
+  to fix compilation failure.
+
 ## 0.2.0.0
 
 ### New sketch families
