@@ -1,5 +1,14 @@
 # Changelog for data-sketches-core
 
+## 0.2.0.1
+
+### Bug fixes
+
+- **Missing `include-dirs` for C headers**: `cbits/req.c` includes `req.h` but the
+  cabal file had no `include-dirs` entry pointing at `cbits/`, causing a build failure
+  (`fatal error: req.h: No such file or directory`). Added `include-dirs: cbits` and
+  listed header files in `extra-source-files` so they're included in sdist tarballs.
+
 ## 0.2.0.0
 
 ### New sketch families
