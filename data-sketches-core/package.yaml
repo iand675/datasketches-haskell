@@ -18,6 +18,7 @@ default-extensions:
 extra-source-files:
 - README.md
 - ChangeLog.md
+- cbits/*.h
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -47,9 +48,6 @@ library:
   - cbits/theta.c
   - cbits/req.c
   include-dirs: cbits
-  install-includes:
-  - req.h
-  - kll.h
   cc-options:
   - -O2
   exposed-modules:

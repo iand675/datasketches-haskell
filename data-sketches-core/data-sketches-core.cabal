@@ -18,6 +18,8 @@ build-type:     Simple
 extra-source-files:
     README.md
     ChangeLog.md
+    cbits/req.h
+    cbits/kll.h
 
 source-repository head
   type: git
@@ -53,9 +55,6 @@ library
       TypeFamilies
       TypeOperators
   include-dirs: cbits
-  install-includes:
-      req.h
-      kll.h
   cc-options: -O2
   c-sources:
       cbits/sketches.c
