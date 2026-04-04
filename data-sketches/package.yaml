@@ -65,6 +65,7 @@ tests:
     - data-sketches-core
     - hspec
     - hspec-junit-formatter
+    - text
     # - hspec-discover
     - QuickCheck
     - statistics

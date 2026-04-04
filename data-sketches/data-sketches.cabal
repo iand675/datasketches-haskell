@@ -103,6 +103,7 @@ test-suite data-sketches-test
     , process
     , statistics
     , temporary
+    , text
     , vector
     , vector-algorithms
   default-language: Haskell2010

@@ -1,5 +1,22 @@
 # Changelog for data-sketches-core
 
+## Unreleased
+
+### Bug fixes
+
+- **REQ: `invariant violated: lastWeight does not equal raSize` (#2)**:
+  `mkAuxiliary` previously trusted the sketch's cached `totalN` and
+  `retainedItems` and called `error` if they disagreed with the actual
+  compactor contents. An async exception delivered mid-`insert` (e.g. a
+  warp request handler being killed on client disconnect, while inside
+  `withMVar … insert`) can leave those cached counters skewed, after which
+  every subsequent `quantile` call would throw. `mkAuxiliary` now derives
+  both the retained-item count and the total weight directly from the
+  compactor buffers, so the auxiliary (and hence `quantile`) remains
+  self-consistent and never throws on this path. The `totalN` /
+  `retainedItems` parameters are retained for API compatibility but are
+  now ignored.
+
 ## 0.2.0.1
 
 ### Bug fixes
