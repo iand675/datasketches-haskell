@@ -11,18 +11,22 @@ import qualified CountMinSpec
 import qualified BugFixSpec
 import qualified CrossValidationSpec
 import System.Environment
-import Test.HSpec.JUnit
+import Test.Hspec.JUnit
+import Test.Hspec.JUnit.Config
 import Test.Hspec.Runner
+import qualified Data.Text as T
 
 main :: IO ()
-main = 
+main =
       getArgs
   >>= readConfig config
   >>= withArgs [] . runSpec specs
   >>= evaluateSummary
   where
-    config = defaultConfig 
-      { configFormat = Just $ junitFormat "test-results.xml" "data-sketches" 
+    config = defaultConfig
+      { configFormat = Just $ junitFormat $
+          setJUnitConfigOutputFile "test-results.xml" $
+            defaultJUnitConfig (T.pack "data-sketches")
       }
     specs = do
       describe "Auxiliary" AuxiliarySpec.spec

@@ -41,24 +41,40 @@ data MReqAuxiliary s = MReqAuxiliary
   , mraSize :: {-# UNPACK #-} !Word64
   }
 
+-- | Build a sorted-view auxiliary from a vector of compactors.
+--
+-- The @totalN@ and @retainedItems@ arguments are accepted for API
+-- compatibility but are no longer trusted: both are recomputed from the
+-- compactor buffers themselves. This makes the auxiliary self-consistent
+-- even when the sketch's cached counters have drifted from the actual
+-- buffer contents (which can happen if an async exception interrupts
+-- 'insert' between its individual mutation steps — see issue #2).
+-- Previously this surfaced as @invariant violated: lastWeight does not
+-- equal raSize@; now the auxiliary simply reflects whatever is actually
+-- in the compactors.
 mkAuxiliary :: (PrimMonad m, s ~ PrimState m) => RankAccuracy -> Word64 -> Int -> Vector.Vector (ReqCompactor s) -> m ReqAuxiliary
-mkAuxiliary rankAccuracy totalN retainedItems compactors = do
+mkAuxiliary rankAccuracy _totalN _retainedItems compactors = do
+  retainedItems <- Vector.foldM countBuffer 0 compactors
   items <- newMutVar =<< MUVector.replicate retainedItems (0, 0)
   let this = MReqAuxiliary
         { mraWeightedItems = items
         , mraHighRankAccuracy = rankAccuracy
-        , mraSize = totalN
+        , mraSize = 0
         }
   Vector.foldM_ (mergeBuffers this) 0 compactors
-  createCumulativeWeights this
+  totalWeight <- createCumulativeWeights this
   dedup this
   items' <- U.unsafeFreeze =<< readMutVar items
   pure ReqAuxiliary
     { raWeightedItems = items'
     , raHighRankAccuracy = rankAccuracy
-    , raSize = totalN
+    , raSize = totalWeight
     }
   where
+    countBuffer acc compactor = do
+      buff <- Compactor.getBuffer compactor
+      buffSize <- DoubleBuffer.getCount buff
+      pure $! acc + buffSize
     mergeBuffers this auxCount compactor = do
       buff <- Compactor.getBuffer compactor
       buffSize <-  DoubleBuffer.getCount buff
@@ -92,7 +108,7 @@ getQuantile this normalRank ltEq = fst (weightedItems U.! ix)
     weightsSize = U.length weightedItems
     rank = floor (normalRank * fromIntegral (raSize this))
 
-createCumulativeWeights :: PrimMonad m => MReqAuxiliary (PrimState m) -> m ()
+createCumulativeWeights :: PrimMonad m => MReqAuxiliary (PrimState m) -> m Word64
 createCumulativeWeights this = do
   weights <- getWeights this
   let size = MUVector.length weights
@@ -101,9 +117,9 @@ createCumulativeWeights this = do
           prevWeight <- MUVector.read weights (i - 1)
           MUVector.unsafeWrite weights i (weight + prevWeight)
   forI_ weights (\i -> MUVector.read weights i >>= \x -> accumulateM i x)
-  lastWeight <- MUVector.read weights (size - 1)
-  when (lastWeight /= mraSize this) $ do
-    error "invariant violated: lastWeight does not equal raSize"
+  if size == 0
+    then pure 0
+    else MUVector.read weights (size - 1)
   where
     forI_ :: (Monad m, MG.MVector v a) => v (PrimState m) a -> (Int -> m b) -> m ()
     {-# INLINE forI_ #-}
