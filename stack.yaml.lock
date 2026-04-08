@@ -5,13 +5,6 @@
 
 packages:
 - completed:
-    hackage: hspec-junit-formatter-1.0.1.0@sha256:6429871263be4532a3a6d08e72da5a8e4c00e8bfbfd7fc5b8352a3643f867453,2652
-    pantry-tree:
-      sha256: e291cfcbf4829d79ae0f38e17a0d429a9967d3b5ece0bbbb211a644c036a64d5
-      size: 491
-  original:
-    hackage: hspec-junit-formatter-1.0.1.0
-- completed:
     hackage: hedgehog-1.5@sha256:c904dc9d8ae7b47a58771a0fbfb7a77882059a2b77c9c0c722dc16de504d0bd4,4817
     pantry-tree:
       sha256: 3298d4289733f2d9ae179f3c71f7b6ff0648c30f4f5195c3d5e28bc8f7fe99f2

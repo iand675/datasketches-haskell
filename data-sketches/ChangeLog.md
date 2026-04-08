@@ -1,5 +1,36 @@
 # Changelog for data-sketches
 
+## 0.4.0.1 — 2026-04-08
+
+### Internal cleanup
+
+- Removed dead pure-Haskell REQ internals that were superseded by the C
+  backend in 0.4.0.0. No public API changes — `insert`, `quantile`, `rank`,
+  `countWithCriterion`, and all other exports continue to work identically.
+
+- Dropped unused `mwc-random`, `vector-algorithms`, `mtl`, and
+  `hspec-junit-formatter` dependencies.
+
+### Performance
+
+- HLL `estimate` is ~2.6x faster (C backend: `ldexp` replaced with bit
+  manipulation; NEON/SSE2 intrinsics for merge and zero-counting).
+
+- Added estimate, merge, and query benchmarks for HLL, KLL, and Count-Min
+  sketches (criterion suite).
+
+### Test improvements
+
+- Added `countWithCriterion` coverage: LT/LE threshold counting, boundary
+  behavior at min/max, duplicate values, estimation mode, and non-finite
+  exception handling.
+
+- Added quantile monotonicity tests: verifies `quantile(r1) <= quantile(r2)`
+  for `r1 <= r2` in exact mode, HRA estimation mode, and LRA estimation mode.
+
+- Added estimation mode capacity growth tests: 10K inserts with accuracy
+  checks; batch vs sequential insert equivalence.
+
 ## 0.4.0.0
 
 ### New sketch families

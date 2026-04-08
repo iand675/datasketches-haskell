@@ -4,12 +4,14 @@ module RelativeErrorQuantileSpec where
 
 import Control.Monad
 import Control.Monad.Primitive
-import DataSketches.Quantiles.RelativeErrorQuantile
+import DataSketches.Quantiles.RelativeErrorQuantile hiding (null, minimum, maximum)
+import qualified DataSketches.Quantiles.RelativeErrorQuantile as REQ
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import Data.List hiding (insert, null)
+import Data.List hiding (insert, null, minimum, maximum)
 import qualified Data.List
 import Data.Word
 import Test.Hspec
+import qualified Data.Vector.Storable as VS
 
 spec :: Spec
 spec = do
@@ -20,7 +22,7 @@ spec = do
   specify "updating a sketch with NaN should ignore it" $ asIO $ do
     sk <- mkReqSketch 6 HighRanksAreAccurate
     insert sk (0 / 0)
-    isEmpty <- DataSketches.Quantiles.RelativeErrorQuantile.null sk
+    isEmpty <- REQ.null sk
     isEmpty `shouldBe` True
   specify "non finite rank should throw" $ asIO $ do
     let infinity = read "Infinity"::Double
@@ -90,6 +92,143 @@ spec = do
       insert sk 1
       r <- quantile sk 0.5
       r `shouldBe` 1.0
+
+  describe "quantile monotonicity" $ do
+    specify "quantiles are non-decreasing for increasing normalized ranks (exact mode)" $ asIO $ do
+      sk <- mkReqSketch 50 HighRanksAreAccurate
+      mapM_ (insert sk) [1..100 :: Double]
+      let rankPoints = [0, 0.1 .. 1.0]
+      qs <- quantiles sk rankPoints
+      forM_ (zip qs (drop 1 qs)) $ \(q1, q2) ->
+        q2 `shouldSatisfy` (>= q1)
+
+    specify "quantiles are non-decreasing (estimation mode, HRA)" $ asIO $ do
+      sk <- mkReqSketch 6 HighRanksAreAccurate
+      mapM_ (insert sk) [1..2000 :: Double]
+      estimation <- isEstimationMode sk
+      estimation `shouldBe` True
+      let rankPoints = [0, 0.01 .. 1.0]
+      qs <- quantiles sk rankPoints
+      forM_ (zip qs (drop 1 qs)) $ \(q1, q2) ->
+        q2 `shouldSatisfy` (>= q1)
+
+    specify "quantiles are non-decreasing (estimation mode, LRA)" $ asIO $ do
+      sk <- mkReqSketch 6 LowRanksAreAccurate
+      mapM_ (insert sk) [1..2000 :: Double]
+      estimation <- isEstimationMode sk
+      estimation `shouldBe` True
+      let rankPoints = [0, 0.01 .. 1.0]
+      qs <- quantiles sk rankPoints
+      forM_ (zip qs (drop 1 qs)) $ \(q1, q2) ->
+        q2 `shouldSatisfy` (>= q1)
+
+  describe "countWithCriterion" $ do
+    specify "counts items strictly less than threshold (LT)" $ asIO $ do
+      sk <- mkReqSketch 50 HighRanksAreAccurate
+      mapM_ (insert sk) [10, 20, 30, 40, 50 :: Double]
+      setCriterionLT sk
+      cnt <- countWithCriterion sk 30
+      cnt `shouldBe` 2
+      cntAll <- countWithCriterion sk 55
+      cntAll `shouldBe` 5
+      cntNone <- countWithCriterion sk 5
+      cntNone `shouldBe` 0
+
+    specify "counts items less than or equal to threshold (LE)" $ asIO $ do
+      sk <- mkReqSketch 50 HighRanksAreAccurate
+      mapM_ (insert sk) [10, 20, 30, 40, 50 :: Double]
+      setCriterionLE sk
+      cnt <- countWithCriterion sk 30
+      cnt `shouldBe` 3
+      cntAll <- countWithCriterion sk 50
+      cntAll `shouldBe` 5
+      cntNone <- countWithCriterion sk 5
+      cntNone `shouldBe` 0
+
+    specify "boundary: at exact min value" $ asIO $ do
+      sk <- mkReqSketch 50 HighRanksAreAccurate
+      mapM_ (insert sk) [10, 20, 30, 40, 50 :: Double]
+      setCriterionLT sk
+      cntLt <- countWithCriterion sk 10
+      cntLt `shouldBe` 0
+      setCriterionLE sk
+      cntLe <- countWithCriterion sk 10
+      cntLe `shouldBe` 1
+
+    specify "boundary: at exact max value" $ asIO $ do
+      sk <- mkReqSketch 50 HighRanksAreAccurate
+      mapM_ (insert sk) [10, 20, 30, 40, 50 :: Double]
+      setCriterionLT sk
+      cntLt <- countWithCriterion sk 50
+      cntLt `shouldBe` 4
+      setCriterionLE sk
+      cntLe <- countWithCriterion sk 50
+      cntLe `shouldBe` 5
+
+    specify "with duplicate values" $ asIO $ do
+      sk <- mkReqSketch 50 HighRanksAreAccurate
+      mapM_ (insert sk) [1, 1, 1, 2, 2, 3 :: Double]
+      setCriterionLT sk
+      cntLt <- countWithCriterion sk 2
+      cntLt `shouldBe` 3
+      setCriterionLE sk
+      cntLe <- countWithCriterion sk 2
+      cntLe `shouldBe` 5
+
+    specify "works in estimation mode after compaction" $ asIO $ do
+      sk <- mkReqSketch 6 HighRanksAreAccurate
+      mapM_ (insert sk) [1..2000 :: Double]
+      estimation <- isEstimationMode sk
+      estimation `shouldBe` True
+      n <- count sk
+      n `shouldBe` 2000
+      setCriterionLE sk
+      cntMax <- countWithCriterion sk 2000
+      cntMax `shouldBe` n
+      setCriterionLT sk
+      cntMin <- countWithCriterion sk 0
+      cntMin `shouldBe` 0
+
+    specify "non-finite value throws DoubleIsNonFiniteException" $ asIO $ do
+      sk <- mkReqSketch 6 HighRanksAreAccurate
+      insert sk 1
+      countWithCriterion sk (0 / 0) `shouldThrow` (\(DoubleIsNonFiniteException _) -> True)
+
+  describe "estimation mode capacity growth" $ do
+    specify "10,000 inserts followed by correct quantile queries" $ asIO $ do
+      sk <- mkReqSketch 6 HighRanksAreAccurate
+      forM_ [1..10_000 :: Double] $ insert sk
+      n <- count sk
+      n `shouldBe` 10_000
+      estimation <- isEstimationMode sk
+      estimation `shouldBe` True
+      p50 <- quantile sk 0.5
+      p50 `shouldSatisfy` (\v -> v >= 4000 && v <= 6000)
+      p99 <- quantile sk 0.99
+      p99 `shouldSatisfy` (\v -> v >= 9800 && v <= 10_000)
+      mn <- REQ.minimum sk
+      mn `shouldBe` 1
+      mx <- REQ.maximum sk
+      mx `shouldBe` 10_000
+
+    specify "batch insert matches sequential insert" $ asIO $ do
+      skSeq <- mkReqSketch 12 HighRanksAreAccurate
+      forM_ [1..500 :: Double] $ insert skSeq
+
+      skBatch <- mkReqSketch 12 HighRanksAreAccurate
+      insertBatch skBatch (VS.fromList [1..500])
+
+      seqCount <- count skSeq
+      batchCount <- count skBatch
+      seqCount `shouldBe` batchCount
+
+      seqMin <- REQ.minimum skSeq
+      batchMin <- REQ.minimum skBatch
+      seqMin `shouldBe` batchMin
+
+      seqMax <- REQ.maximum skSeq
+      batchMax <- REQ.maximum skBatch
+      seqMax `shouldBe` batchMax
 
 
 bigTest :: Word32 -> Int -> Int -> RankAccuracy -> Bool -> Bool -> Spec

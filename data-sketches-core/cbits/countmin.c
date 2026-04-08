@@ -71,8 +71,10 @@ uint64_t cms_c_estimate(const cms_sketch_t *sk, uint64_t item) {
 
 void cms_c_merge(cms_sketch_t *dst, const cms_sketch_t *src) {
     int n = dst->rows * dst->cols;
+    uint64_t *__restrict__ dt = dst->table;
+    const uint64_t *__restrict__ st = src->table;
     for (int i = 0; i < n; i++)
-        dst->table[i] += src->table[i];
+        dt[i] += st[i];
     dst->total_n += src->total_n;
 }
 

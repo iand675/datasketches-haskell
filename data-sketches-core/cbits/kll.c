@@ -4,6 +4,14 @@
 #include <math.h>
 #include <float.h>
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#define KLL_HAS_NEON 1
+#elif defined(__SSE2__)
+#include <emmintrin.h>
+#define KLL_HAS_SSE2 1
+#endif
+
 static inline uint64_t rotl64(uint64_t x, int k) {
     return (x << k) | (x >> (64 - k));
 }
@@ -254,8 +262,48 @@ double kll_rank(const kll_sketch_t *sk, double value) {
     for (int h = 0; h < sk->num_levels; h++) {
         uint64_t weight = 1ULL << h;
         int lo = sk->levels[h], hi = sk->levels[h + 1];
-        for (int i = lo; i < hi; i++)
-            count_below += weight * (sk->items[i] < value);
+        int n = hi - lo;
+        const double *items = sk->items + lo;
+#if KLL_HAS_NEON
+        {
+            float64x2_t val_vec = vdupq_n_f64(value);
+            uint64x2_t acc = vdupq_n_u64(0);
+            int i = 0;
+            int chunks = n & ~3;
+            for (; i < chunks; i += 4) {
+                /* vcltq_f64 returns all-ones (0xFFFF...) per lane where true.
+                   All-ones as uint64 = UINT64_MAX; negate to get 1. */
+                uint64x2_t cmp0 = vcltq_f64(vld1q_f64(items + i), val_vec);
+                uint64x2_t cmp1 = vcltq_f64(vld1q_f64(items + i + 2), val_vec);
+                acc = vsubq_u64(acc, cmp0);
+                acc = vsubq_u64(acc, cmp1);
+            }
+            count_below += weight * (vgetq_lane_u64(acc, 0) + vgetq_lane_u64(acc, 1));
+            for (; i < n; i++)
+                count_below += weight * (items[i] < value);
+        }
+#elif KLL_HAS_SSE2
+        {
+            __m128d val_vec = _mm_set1_pd(value);
+            uint64_t local = 0;
+            int i = 0;
+            int chunks = n & ~1;
+            for (; i < chunks; i += 2) {
+                __m128d data = _mm_loadu_pd(items + i);
+                __m128d cmp = _mm_cmplt_pd(data, val_vec);
+                /* Each lane is all-ones (-1 as int64) or zero */
+                local -= (uint64_t)_mm_cvtsi128_si64(_mm_castpd_si128(cmp));
+                local -= (uint64_t)_mm_cvtsi128_si64(
+                    _mm_srli_si128(_mm_castpd_si128(cmp), 8));
+            }
+            count_below += weight * local;
+            for (; i < n; i++)
+                count_below += weight * (items[i] < value);
+        }
+#else
+        for (int i = 0; i < n; i++)
+            count_below += weight * (items[i] < value);
+#endif
     }
     return (double)count_below / (double)sk->total_n;
 }

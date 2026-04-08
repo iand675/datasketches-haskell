@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           data-sketches-core
-version:        0.2.0.1
+version:        0.3.0.0
 description:    Please see the README on GitHub at <https://github.com/iand675/datasketches-haskell#readme>
 homepage:       https://github.com/iand675/datasketches-haskell#readme
 bug-reports:    https://github.com/iand675/datasketches-haskell/issues
@@ -18,8 +18,8 @@ build-type:     Simple
 extra-source-files:
     README.md
     ChangeLog.md
-    cbits/req.h
     cbits/kll.h
+    cbits/req.h
 
 source-repository head
   type: git
@@ -27,14 +27,7 @@ source-repository head
 
 library
   exposed-modules:
-      DataSketches.Core.Internal.URef
-      DataSketches.Core.Snapshot
-      DataSketches.Quantiles.RelativeErrorQuantile.Internal
-      DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary
-      DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor
       DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
-      DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
-      DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch
       DataSketches.Quantiles.RelativeErrorQuantile.Types
       DataSketches.Quantiles.KLL.Internal
       DataSketches.Frequencies.CountMin.Internal
@@ -54,7 +47,8 @@ library
       StandaloneDeriving
       TypeFamilies
       TypeOperators
-  include-dirs: cbits
+  include-dirs:
+      cbits
   cc-options: -O2
   c-sources:
       cbits/sketches.c
@@ -67,10 +61,8 @@ library
       base >=4.7 && <5
     , deepseq
     , ghc-prim
-    , mwc-random
     , primitive
     , vector
-    , vector-algorithms
   default-language: Haskell2010
 
 test-suite data-sketches-core-test
@@ -94,8 +86,6 @@ test-suite data-sketches-core-test
     , data-sketches-core
     , deepseq
     , ghc-prim
-    , mwc-random
     , primitive
     , vector
-    , vector-algorithms
   default-language: Haskell2010

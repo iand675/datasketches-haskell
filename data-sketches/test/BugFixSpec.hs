@@ -1,75 +1,27 @@
 {-# LANGUAGE TypeApplications #-}
 module BugFixSpec where
 
-import Control.Monad (forM_, replicateM_)
-import Control.Monad.Primitive (PrimState)
-import Data.Word
-import qualified Data.Vector.Unboxed.Mutable as MUVector
+import Control.Monad (forM_)
 import Test.Hspec
 import DataSketches.Quantiles.RelativeErrorQuantile hiding (null, minimum, maximum)
 import qualified DataSketches.Quantiles.RelativeErrorQuantile as REQ
-import DataSketches.Quantiles.RelativeErrorQuantile.Types
-import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
 
 spec :: Spec
 spec = do
-  describe "Bug fix: off-by-one in getCountWithCriterion (spaceAtBottom=False)" $ do
-    -- These tests exercise the Haskell-internal DoubleBuffer directly.
-    specify "getCountWithCriterion reads only within active region (spaceAtBottom=False)" $ do
-      buf <- mkBuffer 16 0 False
-      mapM_ (append buf) [10, 20, 30, 40, 50]
-      sort buf
-
-      vec <- getVector buf
-      forM_ [5..15] $ \i -> MUVector.unsafeWrite vec i 0
-
-      cnt <- getCountWithCriterion buf 55 (:<)
-      cnt `shouldBe` 5
-
-    specify "getCountWithCriterion at upper boundary (spaceAtBottom=False)" $ do
-      buf <- mkBuffer 16 0 False
-      mapM_ (append buf) [10, 20, 30, 40, 50]
-      sort buf
-
-      vec <- getVector buf
-      forM_ [5..15] $ \i -> MUVector.unsafeWrite vec i 25
-
-      cnt <- getCountWithCriterion buf 50 (:<)
-      cnt `shouldBe` 4
-
-      cnt2 <- getCountWithCriterion buf 50 (:<=)
-      cnt2 `shouldBe` 5
-
-    specify "getCountWithCriterion at lower boundary (spaceAtBottom=False)" $ do
-      buf <- mkBuffer 16 0 False
-      mapM_ (append buf) [10, 20, 30, 40, 50]
-      sort buf
-
-      vec <- getVector buf
-      forM_ [5..15] $ \i -> MUVector.unsafeWrite vec i 0
-
-      cnt <- getCountWithCriterion buf 5 (:<)
-      cnt `shouldBe` 0
-
-      cnt2 <- getCountWithCriterion buf 10 (:<)
-      cnt2 `shouldBe` 0
-
-      cnt3 <- getCountWithCriterion buf 10 (:<=)
-      cnt3 `shouldBe` 1
-
-    specify "rank of value above max is correct with LowRanksAreAccurate" $ do
+  describe "Bug fix: rank boundary conditions with LowRanksAreAccurate" $ do
+    specify "rank of value above max is correct" $ do
       sk <- mkReqSketch 12 LowRanksAreAccurate
       forM_ [1..50 :: Double] $ insert sk
       r <- rank sk 100
       r `shouldBe` 1.0
 
-    specify "rank of value below min is 0 with LowRanksAreAccurate" $ do
+    specify "rank of value below min is 0" $ do
       sk <- mkReqSketch 12 LowRanksAreAccurate
       forM_ [10..60 :: Double] $ insert sk
       r <- rank sk 5
       r `shouldBe` 0.0
 
-    specify "ranks are correct for known values with LowRanksAreAccurate" $ do
+    specify "ranks are correct for known values" $ do
       sk <- mkReqSketch 50 LowRanksAreAccurate
       let values = [5, 5, 5, 6, 6, 6, 7, 8, 8, 8 :: Double]
       mapM_ (insert sk) values

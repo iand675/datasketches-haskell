@@ -1,7 +1,4 @@
 import Test.Hspec
-import qualified AuxiliarySpec
-import qualified CompactorSpec
-import qualified DoubleBufferSpec
 import qualified ProofCheckSpec
 import qualified RelativeErrorQuantileSpec
 import qualified KllSpec
@@ -11,23 +8,16 @@ import qualified CountMinSpec
 import qualified BugFixSpec
 import qualified CrossValidationSpec
 import System.Environment
-import Test.HSpec.JUnit
 import Test.Hspec.Runner
 
 main :: IO ()
-main = 
+main =
       getArgs
-  >>= readConfig config
+  >>= readConfig defaultConfig
   >>= withArgs [] . runSpec specs
   >>= evaluateSummary
   where
-    config = defaultConfig 
-      { configFormat = Just $ junitFormat "test-results.xml" "data-sketches" 
-      }
     specs = do
-      describe "Auxiliary" AuxiliarySpec.spec
-      describe "Compactor" CompactorSpec.spec
-      describe "DoubleBuffer" DoubleBufferSpec.spec
       describe "ProofCheck" ProofCheckSpec.spec
       describe "RelativeErrorQuantile" RelativeErrorQuantileSpec.spec
       describe "KLL" KllSpec.spec
@@ -36,4 +26,3 @@ main =
       describe "CountMin" CountMinSpec.spec
       describe "BugFix" BugFixSpec.spec
       describe "CrossValidation" CrossValidationSpec.spec
-

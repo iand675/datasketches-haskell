@@ -1,5 +1,5 @@
 name:                data-sketches
-version:             0.4.0.0
+version:             0.4.0.1
 github:              "iand675/datasketches-haskell"
 license:             Apache
 author:              "Ian Duncan, Rob Bassi"
@@ -36,12 +36,9 @@ description:         Please see the README on GitHub at <https://github.com/iand
 dependencies:
 - base >= 4.7 && < 5
 - vector
-- mwc-random
-- mtl
 - primitive
-- vector-algorithms
 - ghc-prim
-- data-sketches-core == 0.2.*
+- data-sketches-core == 0.3.*
 
 library:
   source-dirs: src
@@ -64,7 +61,6 @@ tests:
     - data-sketches
     - data-sketches-core
     - hspec
-    - hspec-junit-formatter
     # - hspec-discover
     - QuickCheck
     - statistics
@@ -73,8 +69,6 @@ tests:
     - process
     - directory
     - temporary
-    # build-tool-depends:
-    # - hspec-discover:hspec-discover
 
 benchmarks:
   bench:

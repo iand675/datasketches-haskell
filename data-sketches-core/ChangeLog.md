@@ -1,5 +1,50 @@
 # Changelog for data-sketches-core
 
+## 0.3.0.0 — 2026-04-08
+
+### Breaking changes
+
+- **Removed old pure-Haskell REQ internals**: The following modules have been
+  removed. All sketch operations now go through the C backend (`CInternal`),
+  which replaced these modules in 0.2.0.0 but left the dead code in the
+  package. Downstream consumers should use the public `data-sketches` API.
+
+  - `DataSketches.Core.Internal.URef`
+  - `DataSketches.Core.Snapshot`
+  - `DataSketches.Quantiles.RelativeErrorQuantile.Internal`
+  - `DataSketches.Quantiles.RelativeErrorQuantile.Internal.Auxiliary`
+  - `DataSketches.Quantiles.RelativeErrorQuantile.Internal.Compactor`
+  - `DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer`
+  - `DataSketches.Quantiles.RelativeErrorQuantile.Internal.InequalitySearch`
+
+- **`Criterion` type removed from `Types` module**: The `Criterion` type and
+  its `InequalitySearch` class instance were only used by the deleted Haskell
+  internals. Criterion-based queries are handled entirely in C.
+
+- **`DoubleIsNonFiniteException` moved to `Types` module**: Previously exported
+  from `Internal.DoubleBuffer`, now exported from
+  `DataSketches.Quantiles.RelativeErrorQuantile.Types`.
+
+### Performance
+
+- **HLL estimate: 2.6x faster** — replaced `ldexp(1.0, -val)` (libm call per
+  register) with IEEE 754 bit manipulation (`pow2_neg`). Eliminates ~4096
+  function calls per estimate at p=12.
+
+- **NEON/SSE2 intrinsics for HLL and KLL** — explicit SIMD paths for
+  `hll_c_merge` (16-wide `uint8` max via `vmaxq_u8`/`_mm_max_epu8`),
+  `hll_c_estimate` zero-counting (16-wide via `vceqq_u8`/`_mm_cmpeq_epi8`),
+  and `kll_rank` inner loop (2-4 wide `double` comparison via
+  `vcltq_f64`/`_mm_cmplt_pd`). Scalar fallback on other architectures.
+
+- Added `__restrict__` qualifiers to `cms_c_merge` to guarantee
+  auto-vectorization of the bulk `uint64` addition.
+
+### Dependency changes
+
+- Dropped `mwc-random` and `vector-algorithms` dependencies (only needed by
+  the removed Haskell internals).
+
 ## 0.2.0.1
 
 ### Bug fixes

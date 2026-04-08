@@ -96,11 +96,9 @@ import Control.Monad (when)
 import Control.Monad.Primitive ( PrimMonad(PrimState) )
 import Data.Word ( Word32, Word64 )
 import DataSketches.Quantiles.RelativeErrorQuantile.Types
-    ( RankAccuracy(..) )
+    ( RankAccuracy(..), DoubleIsNonFiniteException(..) )
 import DataSketches.Quantiles.RelativeErrorQuantile.Internal.Constants
     ( fixRseFactor, initNumberOfSections, relRseFactor )
-import DataSketches.Quantiles.RelativeErrorQuantile.Internal.DoubleBuffer
-    ( DoubleIsNonFiniteException(..) )
 import DataSketches.Quantiles.RelativeErrorQuantile.CInternal
 import qualified Data.List
 import qualified Data.Vector.Storable as VS
